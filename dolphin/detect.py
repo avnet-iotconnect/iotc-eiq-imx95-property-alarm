@@ -23,6 +23,7 @@ from time import perf_counter
 from tflite_runtime.interpreter import Interpreter, load_delegate
 
 from camera import Camera
+from overlay import OverlayState, draw_overlay
 from yolo import (
     COCO_CLASSES,
     decode_detections,
@@ -79,7 +80,9 @@ def report_summary(steady_state: list[dict[str, float]]) -> None:
     print(f"  {'TOTAL':11s}: {total:6.2f} ms  ->  {1000 / total:.1f} fps end-to-end")
 
 
-def run_detection_loop(interpreter: Interpreter, camera: Camera, args: argparse.Namespace) -> None:
+def run_detection_loop(
+    interpreter: Interpreter, camera: Camera, overlay_state: OverlayState, args: argparse.Namespace
+) -> None:
     input_detail = interpreter.get_input_details()[0]
     output_detail = interpreter.get_output_details()[0]
     input_size = int(input_detail["shape"][1])  # model input is square: shape is (1, size, size, 3)
@@ -117,6 +120,10 @@ def run_detection_loop(interpreter: Interpreter, camera: Camera, args: argparse.
             "inference": (after_inference - after_preprocess) * 1000,
             "postprocess": (after_postprocess - after_inference) * 1000,
         }
+        overlay_state.detections = detections  # atomic reference swap; the preview draws the latest
+        overlay_state.inference_ms = stage_ms["inference"]
+        overlay_state.end_to_end_ms = sum(stage_ms.values())
+
         report_frame(frame_index, detections, stage_ms)
         if frame_index >= 1:  # frame 0 is warm-up; steady-state numbers start at frame 1
             steady_state.append(stage_ms)
@@ -134,7 +141,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=480, help="camera capture height")
     parser.add_argument("--conf", type=float, default=0.25, help="minimum score to keep a detection")
     parser.add_argument("--iou", type=float, default=0.45, help="NMS IoU threshold")
-    parser.add_argument("--threads", type=int, default=6, help="CPU threads for tflite (6 = all A55 cores)")
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=0,
+        help="CPU threads for tflite (0 = auto: 6 for CPU path, 2 for NPU path to avoid oversubscription)",
+    )
     parser.add_argument("--max-frames", type=int, default=0, help="stop after N frames (0 = run until Ctrl-C)")
     parser.add_argument("--no-preview", action="store_true", help="skip the Wayland preview window")
     return parser.parse_args()
@@ -142,13 +154,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    interpreter = build_interpreter(args.model, args.delegate, args.threads)
+    # The CPU path parallelizes convolutions across all cores; the NPU path runs convs on the NPU, so
+    # extra CPU threads only oversubscribe the camera/preview threads and add latency spikes. Auto-pick.
+    num_threads = args.threads if args.threads > 0 else (2 if args.delegate else 6)
+    interpreter = build_interpreter(args.model, args.delegate, num_threads)
     describe_model(interpreter, args.delegate)
 
+    overlay_state = OverlayState(backend="NEUTRON NPU" if args.delegate else "CPU")
     camera = Camera(args.device, args.width, args.height, show_preview=not args.no_preview)
+    camera.connect_overlay(lambda context: draw_overlay(context, overlay_state))
     camera.start()
     try:
-        run_detection_loop(interpreter, camera, args)
+        run_detection_loop(interpreter, camera, overlay_state, args)
     except KeyboardInterrupt:
         print("\ninterrupted - stopping")
     finally:

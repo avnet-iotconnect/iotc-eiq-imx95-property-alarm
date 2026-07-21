@@ -26,9 +26,11 @@ class Camera:
     def __init__(self, device: str, width: int, height: int, show_preview: bool = True) -> None:
         # The camera speaks YUY2 (YUYV) natively; videoconvert turns it into RGB for numpy
         # and (on the preview branch) into whatever waylandsink wants. leaky=downstream +
-        # small queues keep us on the newest frame instead of building latency.
+        # small queues keep us on the newest frame instead of building latency. cairooverlay
+        # lets us paint detection boxes onto the live preview (see connect_overlay).
         preview_branch = (
-            "t. ! queue max-size-buffers=2 leaky=downstream ! videoconvert ! waylandsink sync=false"
+            "t. ! queue max-size-buffers=2 leaky=downstream ! videoconvert ! "
+            "cairooverlay name=overlay ! videoconvert ! waylandsink sync=false"
             if show_preview
             else "t. ! queue ! fakesink sync=false"
         )
@@ -44,6 +46,12 @@ class Camera:
         self.sink = self.pipeline.get_by_name("sink")
         self.width = width
         self.height = height
+
+    def connect_overlay(self, draw_callback) -> None:
+        """Call `draw_callback(cairo_context)` once per displayed preview frame, to paint on it."""
+        overlay = self.pipeline.get_by_name("overlay")
+        if overlay is not None:
+            overlay.connect("draw", lambda _element, context, _timestamp, _duration: draw_callback(context))
 
     def start(self) -> None:
         self.pipeline.set_state(Gst.State.PLAYING)
