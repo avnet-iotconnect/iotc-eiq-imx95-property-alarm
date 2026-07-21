@@ -1,0 +1,19 @@
+# Jetbrains IDEs
+.idea/
+
+# temp work files
+/work*/
+
+# python-related
+*/__pycache__/
+*.pyc
+.venv/
+
+
+# conversion artifacts:
+/*.npy
+/*.pt
+/*.onnx
+/*.tflite
+/*_saved_model/
+
