@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run.sh - launch the demo ON THE BOARD.
-#   CPU path : ./run.sh --model yolov8n_int8.tflite
-#   NPU path : ./run.sh --model yolov8n_neutron.tflite --delegate
+#   CPU path : ./run.sh --model yolo11n_int8.tflite
+#   NPU path : ./run.sh --model yolo11n_neutron.tflite --delegate
 # Uses the project venv at ~/dolphin/venv by default (see requirements.txt for its deps).
 # Override with PYTHON=/path/to/python ./run.sh ...
 set -euo pipefail
