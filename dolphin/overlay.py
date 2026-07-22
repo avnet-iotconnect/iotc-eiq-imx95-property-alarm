@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import cairo
 
+from tracking import Track, color_for
+
 
 class OverlayState:
     """The latest thing to draw. Written each frame by the detection loop, read by the draw callback."""
 
     def __init__(self, backend: str) -> None:
         self.backend = backend
-        self.detections: list[tuple[str, float, list[int]]] = []
+        self.tracks: list[Track] = []
         self.inference_ms = 0.0
         self.end_to_end_ms = 0.0
 
@@ -30,19 +32,22 @@ class OverlayState:
 
 
 def draw_overlay(context: cairo.Context, state: OverlayState) -> None:
-    _draw_boxes(context, state.detections)
+    _draw_boxes(context, state.tracks)
     _draw_fps(context, state)
 
 
-def _draw_boxes(context: cairo.Context, detections: list[tuple[str, float, list[int]]]) -> None:
+def _draw_boxes(context: cairo.Context, tracks: list[Track]) -> None:
     context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
     context.set_font_size(16)
     context.set_line_width(2.0)
-    for label, score, (x1, y1, x2, y2) in detections:
-        context.set_source_rgb(0.0, 1.0, 0.4)  # green
+    for track in tracks:
+        x1, y1, x2, y2 = track.box
+        color = color_for(track.short_id)  # each tracked id keeps its own color across frames
+        context.set_source_rgb(*color)
         context.rectangle(x1, y1, x2 - x1, y2 - y1)
         context.stroke()
-        _draw_text(context, f"{label} {score:.2f}", x1 + 3, max(y1 - 5, 14), (0.0, 1.0, 0.4))
+        tag = f"#{track.short_id}" if track.short_id else "#-"
+        _draw_text(context, f"{tag} {track.class_name} {track.score:.2f}", x1 + 3, max(y1 - 5, 14), color)
 
 
 def _draw_fps(context: cairo.Context, state: OverlayState) -> None:

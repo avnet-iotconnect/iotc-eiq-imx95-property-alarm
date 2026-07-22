@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Live YOLOv8 object detection on the FRDM-IMX95 - CPU vs Neutron NPU, same code path.
+"""Live YOLO11n object detection on the FRDM-IMX95 - CPU vs Neutron NPU, same code path.
 
 The point of this demo is to *see and measure* YOLO running on a live camera two ways:
 
-    python3 detect.py --model yolov8n_int8.tflite                 # runs on the 6x Cortex-A55 CPU
-    python3 detect.py --model yolov8n_neutron.tflite --delegate   # runs on the Neutron NPU
+    python3 detect.py --model yolo11n_int8.tflite                 # runs on the 6x Cortex-A55 CPU
+    python3 detect.py --model yolo11n_neutron.tflite --delegate   # runs on the Neutron NPU
 
 Only the two arguments differ; everything below is identical, which is exactly what makes
 the CPU-vs-NPU comparison fair. Each frame goes through four stages and we time all four:
@@ -24,6 +24,7 @@ from tflite_runtime.interpreter import Interpreter, load_delegate
 
 from camera import Camera
 from overlay import OverlayState, draw_overlay
+from tracking import Track, Tracker
 from yolo import (
     COCO_CLASSES,
     decode_detections,
@@ -60,8 +61,8 @@ def describe_model(interpreter: Interpreter, on_neutron: bool) -> None:
     print("-" * 60)
 
 
-def report_frame(index: int, detections: list[tuple[str, float, list[int]]], stage_ms: dict[str, float]) -> None:
-    labels = ", ".join(f"{name} {score:.2f}" for name, score, _ in detections) or "(nothing)"
+def report_frame(index: int, tracks: list[Track], stage_ms: dict[str, float]) -> None:
+    labels = ", ".join(f"#{t.short_id or '-'} {t.class_name} {t.score:.2f}" for t in tracks) or "(nothing)"
     timing = "  ".join(f"{stage}={ms:5.1f}ms" for stage, ms in stage_ms.items())
     total = sum(stage_ms.values())
     print(f"frame {index:04d} | {timing}  total={total:5.1f}ms ({1000 / total:4.1f} fps) | {labels}")
@@ -81,7 +82,8 @@ def report_summary(steady_state: list[dict[str, float]]) -> None:
 
 
 def run_detection_loop(
-    interpreter: Interpreter, camera: Camera, overlay_state: OverlayState, args: argparse.Namespace
+    interpreter: Interpreter, camera: Camera, tracker: Tracker, overlay_state: OverlayState,
+    args: argparse.Namespace,
 ) -> None:
     input_detail = interpreter.get_input_details()[0]
     output_detail = interpreter.get_output_details()[0]
@@ -112,6 +114,7 @@ def run_detection_loop(
             (COCO_CLASSES[class_id], float(score), [int(v) for v in box])
             for box, score, class_id in zip(boxes, scores, class_ids)
         ]
+        tracks = tracker.update(detections)  # stateless detections -> persistent IDs (part of postprocess)
         after_postprocess = perf_counter()
 
         stage_ms = {
@@ -120,11 +123,11 @@ def run_detection_loop(
             "inference": (after_inference - after_preprocess) * 1000,
             "postprocess": (after_postprocess - after_inference) * 1000,
         }
-        overlay_state.detections = detections  # atomic reference swap; the preview draws the latest
+        overlay_state.tracks = tracks  # atomic reference swap; the preview draws the latest
         overlay_state.inference_ms = stage_ms["inference"]
         overlay_state.end_to_end_ms = sum(stage_ms.values())
 
-        report_frame(frame_index, detections, stage_ms)
+        report_frame(frame_index, tracks, stage_ms)
         if frame_index >= 1:  # frame 0 is warm-up; steady-state numbers start at frame 1
             steady_state.append(stage_ms)
         frame_index += 1
@@ -160,12 +163,13 @@ def main() -> None:
     interpreter = build_interpreter(args.model, args.delegate, num_threads)
     describe_model(interpreter, args.delegate)
 
+    tracker = Tracker()
     overlay_state = OverlayState(backend="NEUTRON NPU" if args.delegate else "CPU")
     camera = Camera(args.device, args.width, args.height, show_preview=not args.no_preview)
     camera.connect_overlay(lambda context: draw_overlay(context, overlay_state))
     camera.start()
     try:
-        run_detection_loop(interpreter, camera, overlay_state, args)
+        run_detection_loop(interpreter, camera, tracker, overlay_state, args)
     except KeyboardInterrupt:
         print("\ninterrupted - stopping")
     finally:

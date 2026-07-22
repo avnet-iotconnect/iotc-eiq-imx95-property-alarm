@@ -7,8 +7,19 @@ camera frames. Same code both ways; only the model + `--delegate` flag change.
 - `detect.py` - the flow: capture -> preprocess -> inference -> postprocess, timed per stage.
 - `camera.py` - GStreamer pipeline (`tee` -> waylandsink preview + appsink frames).
 - `yolo.py` - the math: letterbox, quantize, decode YOLO11 output, NMS, box mapping.
-- `run.sh` - launcher that sets the Wayland env for the preview.
+- `tracking.py` - keeps object identities across frames; assigns readable IDs #1-9 (see below).
+- `overlay.py` - draws boxes, IDs and the FPS HUD onto the live preview with Cairo.
+- `run.sh` - launcher that sets the Wayland env and pins the CPU governor.
 - `deploy.sh` - host-side scp of code + models to the board.
+
+## Tracking IDs (what the numbers and colors mean)
+YOLO detects each frame independently - it does not remember objects. `tracking.py` adds that memory:
+it matches this frame's boxes to the previous ones (greedy IoU) so each object keeps one identity, then
+labels it with a short number **#1-9**, each in its own color. Watch the numbers to see the tracker work:
+an ID that vanishes = tracking lost; an ID whose class flips (e.g. `#1 person` -> `#1 chair`) = the model
+confused one thing for another. A freed number is not reused immediately (LRU), so a new object looks new
+rather than inheriting a departed ID. This module is the seam for a later face-recognition subproject:
+a face model would attach a name to a track (`Track.identity`) and the overlay would show that instead.
 
 ## How YOLO works here (the short version)
 YOLO11 takes one square RGB image and predicts, at 2100 anchor points, a box and 80 class scores.
