@@ -164,7 +164,7 @@ def main() -> None:
     describe_model(interpreter, args.delegate)
 
     tracker = Tracker()
-    overlay_state = OverlayState(backend="NEUTRON NPU" if args.delegate else "CPU")
+    overlay_state = OverlayState(backend="NPU" if args.delegate else "CPU")
     camera = Camera(args.device, args.width, args.height, show_preview=not args.no_preview)
     camera.connect_overlay(lambda context: draw_overlay(context, overlay_state))
     camera.start()

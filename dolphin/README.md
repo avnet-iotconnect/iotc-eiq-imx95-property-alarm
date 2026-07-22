@@ -32,7 +32,7 @@ survive int8 quantization - the coordinates collapse to zero. So the model is ex
 **raw head tensors** (shape `1 x 144 x 2100`: 64 box-distribution channels + 80 class logits), and
 that decode is done in float on the CPU in `yolo.py` (`decode_detections`). This is deliberate and
 standard: the NPU runs the heavy convolutions (as `neutronOp`s), the CPU does the cheap decode.
-See `work/export-neutron.py` for the matching export patch.
+See `scripts/yolo-export-prep.py` for the matching export patch.
 
 ## Run (on the board, from ~/dolphin)
 ```

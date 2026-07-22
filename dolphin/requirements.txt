@@ -7,7 +7,7 @@
 #
 # Why not python3.13: --system-site-packages on a 3.13 venv cannot see the 3.14 system packages, and
 # the neutron delegate is ABI-locked to the 3.14 tflite_runtime (ai-edge-litert on 3.13 segfaults on
-# the delegate). CPU-only works on 3.13; the NPU path does not. See work/IMX95.md and work/YOLOV8.md.
+# the delegate). CPU-only works on 3.13; the NPU path does not.
 #
 # The two lines below are only needed if you insist on a fully isolated venv (not recommended here);
 # gi and a delegate-matched tflite_runtime still won't be pip-satisfiable, so the NPU path won't run.
