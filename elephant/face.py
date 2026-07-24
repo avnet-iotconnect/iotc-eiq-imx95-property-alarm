@@ -11,7 +11,8 @@ the CPU (YuNet scales with crop size; alignment is just a landmark warp). SFace 
 alignCrop returns BGR, so we swap - and the int8 input maps straight through (scale 1.0, zero -128).
 
 This module only produces embeddings + the face box (for the overlay); turning an embedding into a *name*
-is the registry's job (`registry.identify`). Keeping "who is this vector" out of here keeps ML/DB split.
+is the registry's job (`registry.resolve_identities`). Keeping "who is this vector" out of here keeps the
+ML/DB split. It's called off the frame loop by `face_worker.py` on one person crop at a time.
 """
 
 from __future__ import annotations
@@ -19,8 +20,6 @@ from __future__ import annotations
 import cv2
 import numpy as np
 from tflite_runtime.interpreter import Interpreter, load_delegate
-
-from tracking import Track
 
 NEUTRON_DELEGATE_PATH = "/usr/lib/libneutron_delegate.so"
 
@@ -36,7 +35,7 @@ class FaceRecognizer:
         self, detector_model_path: str, aligner_model_path: str, embed_model_path: str,
         use_neutron: bool, score_threshold: float = 0.7,
     ) -> None:
-        # Input size is set per-crop in embed_faces; (320, 320) is just the initial placeholder.
+        # Input size is set per-crop in embed_person; (320, 320) is just the initial placeholder.
         self.detector = cv2.FaceDetectorYN.create(
             detector_model_path, "", (320, 320), score_threshold, 0.3, 5000
         )
@@ -49,17 +48,8 @@ class FaceRecognizer:
         self._embed_in = self.embedder.get_input_details()[0]
         self._embed_out = self.embedder.get_output_details()[0]
 
-    def embed_faces(self, frame_rgb: np.ndarray, tracks: list[Track]) -> None:
-        """For every `person` track, set `track.embedding` + `track.face_box` (or clear them if no face)."""
-        for track in tracks:
-            track.embedding, track.face_box = None, None
-            if track.class_name != "person":
-                continue
-            result = self._embed_person(frame_rgb, track.box)
-            if result is not None:
-                track.embedding, track.face_box = result
-
-    def _embed_person(self, frame_rgb: np.ndarray, box: list[int]) -> tuple[np.ndarray, list[int]] | None:
+    def embed_person(self, frame_rgb: np.ndarray, box: list[int]) -> tuple[np.ndarray, list[int]] | None:
+        """One person crop -> (128-d embedding, face box xyxy in frame px), or None if no face found."""
         crop_bgr, offset_x, offset_y = self._crop_bgr(frame_rgb, box)
         if crop_bgr is None:
             return None

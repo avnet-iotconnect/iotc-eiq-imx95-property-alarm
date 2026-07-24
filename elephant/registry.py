@@ -1,15 +1,15 @@
 """The face database: names <-> face embeddings, persisted to a JSON file (the "DB" lineage).
 
 Deliberately the simplest thing that works for a stand demo: a dict of name -> 128-float embedding,
-saved to disk so registrations survive a restart. No index, no averaging over multiple shots - one
-embedding per user is enough to show the flow. Swap in something fancier later without touching callers.
+saved to disk so registrations survive a restart. One embedding per user is enough to show the flow.
 
-Matching uses cosine similarity, which is how SFace embeddings are meant to be compared. OpenCV's own
-default "same identity" cosine threshold for SFace is ~0.363; we expose it so it's easy to tune live.
+Matching uses cosine similarity, how SFace embeddings are meant to be compared (OpenCV's default
+"same identity" threshold for SFace is ~0.363; we expose it so it's easy to tune live).
 
-Two responsibilities, both DB-shaped:
-  identify(tracks)            - turn each track's face embedding into a name (fills Track.identity)
-  is_*_present(tracks)        - the questions the alarm logic in app.py asks each frame
+The interesting piece is `resolve_identities`: it maps *registered users onto tracks* each face cycle,
+which is what makes identity robust to two people crossing. Because a registered user is an anchor, we
+just re-ask "which track's face is most like Joe?" every cycle - reassignment IS swap handling. Between
+cycles identity is sticky (kept through turn-away) and only moves when a user's face shows up elsewhere.
 """
 
 from __future__ import annotations
@@ -23,9 +23,11 @@ from tracking import Track
 
 SFACE_COSINE_THRESHOLD = 0.363  # OpenCV's default same-identity cosine similarity for SFace
 
+Identity = tuple[str | None, float | None]  # (matched name or None, best cosine or None) per track
+
 
 class Registry:
-    """Persistent store of registered users' face embeddings, plus the presence queries app.py needs."""
+    """Persistent store of registered users' face embeddings, plus the queries app.py/worker need."""
 
     def __init__(self, db_path: str, match_threshold: float = SFACE_COSINE_THRESHOLD) -> None:
         self.db_path = Path(db_path)
@@ -37,15 +39,61 @@ class Registry:
         self._embeddings[name] = np.asarray(embedding, dtype=np.float32)
         self._save()
 
-    def identify(self, tracks: list[Track]) -> None:
-        """Fill Track.identity (matched name) and Track.match_score (best cosine, for the debug overlay)."""
-        for track in tracks:
-            if track.embedding is None:
-                track.identity, track.match_score = None, None
+    def resolve_identities(
+        self, embeddings: dict[int, np.ndarray], current_track_ids: list[int], previous: dict[int, Identity]
+    ) -> dict[int, Identity]:
+        """Assign registered users to this cycle's tracks (greedy + sticky), returning track_id -> Identity.
+
+        `embeddings` are the tracks that yielded a face this cycle; `current_track_ids` is every live person
+        track (some had no readable face). `previous` is last cycle's result, for the sticky/swap rules.
+        """
+        matched = self._greedy_assign(embeddings)            # {track_id: (name, score)} confident only
+        claimed_users = {name for name, _ in matched.values()}
+
+        result: dict[int, Identity] = {}
+        for track_id in current_track_ids:
+            if track_id in matched:
+                result[track_id] = matched[track_id]         # fresh confident match this cycle
                 continue
-            name, best_similarity = self._best_match(track.embedding)
-            track.identity = name
-            track.match_score = best_similarity
+            kept = self._sticky(previous.get(track_id), claimed_users)
+            if kept is not None:
+                result[track_id] = kept                      # keep known name through a bad/absent look
+            elif track_id in embeddings:
+                result[track_id] = (None, self._best_score(embeddings[track_id]))  # face seen, no match
+        return result
+
+    def _sticky(self, previous: Identity | None, claimed_users: set[str]) -> Identity | None:
+        """Keep a prior identity only if it still names someone AND that name wasn't claimed elsewhere."""
+        if previous is None or previous[0] is None or previous[0] in claimed_users:
+            return None
+        return previous
+
+    def _greedy_assign(self, embeddings: dict[int, np.ndarray]) -> dict[int, Identity]:
+        """Best-first bipartite match: each registered user to at most one track above the threshold."""
+        candidates = sorted(
+            (
+                (_cosine_similarity(embedding, stored), track_id, name)
+                for track_id, embedding in embeddings.items()
+                for name, stored in self._embeddings.items()
+            ),
+            reverse=True,
+        )
+        assigned: dict[int, Identity] = {}
+        used_names: set[str] = set()
+        for score, track_id, name in candidates:
+            if score < self.match_threshold:
+                break
+            if track_id in assigned or name in used_names:
+                continue
+            assigned[track_id] = (name, score)
+            used_names.add(name)
+        return assigned
+
+    def _best_score(self, embedding: np.ndarray) -> float | None:
+        """Highest cosine to any registered user (debug '?' label); None when nobody is registered."""
+        if not self._embeddings:
+            return None
+        return max(_cosine_similarity(embedding, stored) for stored in self._embeddings.values())
 
     def is_person_present(self, tracks: list[Track]) -> bool:
         return any(track.class_name == "person" for track in tracks)
@@ -56,16 +104,6 @@ class Registry:
     @property
     def user_names(self) -> list[str]:
         return sorted(self._embeddings)
-
-    def _best_match(self, embedding: np.ndarray) -> tuple[str | None, float | None]:
-        """Return (name if best cosine clears the threshold else None, best cosine or None if no users)."""
-        if not self._embeddings:
-            return None, None
-        best_name, best_similarity = max(
-            ((name, _cosine_similarity(embedding, stored)) for name, stored in self._embeddings.items()),
-            key=lambda pair: pair[1],
-        )
-        return (best_name if best_similarity >= self.match_threshold else None), best_similarity
 
     def _load(self) -> dict[str, np.ndarray]:
         if not self.db_path.exists():

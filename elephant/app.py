@@ -14,6 +14,7 @@ recognized => ALARM. (Guarded-object / theft-timing states come in a later pilot
 
 from __future__ import annotations
 
+from face_worker import FaceWorker
 from overlay import AlarmState, Overlay
 from registry import Registry
 from tracking import Track
@@ -24,9 +25,10 @@ _REGISTER_PREFIX = "register user "
 class AntiTheftApp:
     """Alarm state machine + registration, driven entirely by on_frame / on_command."""
 
-    def __init__(self, registry: Registry, overlay: Overlay) -> None:
+    def __init__(self, registry: Registry, overlay: Overlay, face_worker: FaceWorker) -> None:
         self.registry = registry
         self.overlay = overlay
+        self.face_worker = face_worker  # registration reads the latest face embedding from here
         self.state = AlarmState.ARMED  # start armed: the first unrecognized person trips the alarm
         self._last_tracks: list[Track] = []
 
@@ -53,21 +55,13 @@ class AntiTheftApp:
             print(f"[app] ignoring unknown command: {text.strip()!r}")
 
     def _register_user(self, name: str) -> None:
-        """Bind `name` to the face of the most prominent person currently on screen."""
-        track = self._primary_person_with_face()
+        """Bind `name` to the most prominent person on screen (the worker holds the live embeddings)."""
         if not name:
             print("[app] register: no name given")
-        elif track is None:
+        elif self.face_worker.register_user(name, self._last_tracks) is None:
             print(f"[app] register {name!r}: no person with a visible face on screen right now")
         else:
-            self.registry.register_user(name, track.embedding)
-            track.identity = name  # reflect it immediately, before the next frame re-identifies
             print(f"[app] registered {name!r} (now knows: {', '.join(self.registry.user_names)})")
-
-    def _primary_person_with_face(self) -> Track | None:
-        """The largest person track that produced a face embedding this frame - the one being registered."""
-        candidates = [t for t in self._last_tracks if t.class_name == "person" and t.embedding is not None]
-        return max(candidates, key=lambda t: _box_area(t.box), default=None)
 
     def _set_state(self, new_state: AlarmState) -> None:
         """The single place alarm state changes - so every transition has one spot that announces it."""
@@ -75,8 +69,3 @@ class AntiTheftApp:
             return
         self.state = new_state
         print(f"[app] alarm state -> {new_state.label}")  # later: also IoTConnect telemetry
-
-
-def _box_area(box: list[int]) -> int:
-    x1, y1, x2, y2 = box
-    return (x2 - x1) * (y2 - y1)

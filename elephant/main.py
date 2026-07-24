@@ -26,6 +26,7 @@ from app import AntiTheftApp
 from camera import Camera
 from detector import Detector
 from face import FaceRecognizer
+from face_worker import FaceWorker
 from overlay import Overlay
 from registry import Registry
 from tracking import Tracker
@@ -46,9 +47,8 @@ class CommandFile:
 
 
 def run_loop(
-    camera: Camera, detector: Detector, tracker: Tracker, face: FaceRecognizer,
-    registry: Registry, overlay: Overlay, app: AntiTheftApp, commands: CommandFile,
-    max_frames: int,
+    camera: Camera, detector: Detector, tracker: Tracker, face_worker: FaceWorker,
+    overlay: Overlay, app: AntiTheftApp, commands: CommandFile, max_frames: int,
 ) -> None:
     steady_state: list[dict[str, float]] = []
     frame_index = 0
@@ -64,19 +64,19 @@ def run_loop(
         after_inference = perf_counter()
 
         tracks = tracker.update(detections)
-        face.embed_faces(frame, tracks)   # CPU: YuNet + SFace on each person crop
-        registry.identify(tracks)         # embedding -> registered name (fills Track.identity)
-        after_face = perf_counter()
+        face_worker.maybe_dispatch(frame, tracks)  # async, at most every ~200ms on a spare core
+        face_worker.apply(tracks)                   # merge the last cycle's names onto the tracks (fast)
+        after_track = perf_counter()
 
+        app.on_frame(tracks)                        # alarm state; sets app._last_tracks for registration
         for command in commands.poll():
             app.on_command(command)
-        app.on_frame(tracks)
 
         stage_ms = {
             "capture": (after_capture - start) * 1000,
             "inference": (after_inference - after_capture) * 1000,
-            "face+track": (after_face - after_inference) * 1000,
-            "app": (perf_counter() - after_face) * 1000,
+            "track": (after_track - after_inference) * 1000,
+            "app": (perf_counter() - after_track) * 1000,
         }
         overlay.set_timing(stage_ms["inference"], sum(stage_ms.values()))
         report_frame(frame_index, tracks, stage_ms)
@@ -116,6 +116,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sface", default="face_recognition_sface_2021dec.onnx", help="SFace ONNX (align only)")
     parser.add_argument("--sface-model", default="",
                         help="SFace embedder tflite (default: sface_neutron.tflite with --delegate, else sface_int8.tflite)")
+    parser.add_argument("--face-interval", type=float, default=0.2,
+                        help="min seconds between async face-recognition passes (0.2 = ~5 Hz)")
     parser.add_argument("--db", default="faces.json", help="persistent face database (name -> embedding)")
     parser.add_argument("--command-file", default="command.txt", help="file polled for register/arm/disarm")
     parser.add_argument("--device", default="/dev/video4", help="v4l2 camera device (C920 capture node)")
@@ -144,9 +146,10 @@ def main() -> None:
     print(f"Face embed : {sface_model} ({'Neutron NPU' if use_neutron else 'CPU'})")
     face = FaceRecognizer(args.yunet, args.sface, sface_model, use_neutron=use_neutron)
     registry = Registry(args.db)
+    face_worker = FaceWorker(face, registry, args.face_interval)
     tracker = Tracker()
     overlay = Overlay(args.width, args.height, backend="NPU" if use_neutron else "CPU")
-    app = AntiTheftApp(registry, overlay)
+    app = AntiTheftApp(registry, overlay, face_worker)
     commands = CommandFile(args.command_file)
     print(f"Known users: {', '.join(registry.user_names) or '(none - first person will trip the alarm)'}")
     print("-" * 60)
@@ -155,10 +158,11 @@ def main() -> None:
     camera.connect_overlay(overlay.draw)
     camera.start()
     try:
-        run_loop(camera, detector, tracker, face, registry, overlay, app, commands, args.max_frames)
+        run_loop(camera, detector, tracker, face_worker, overlay, app, commands, args.max_frames)
     except KeyboardInterrupt:
         print("\ninterrupted - stopping")
     finally:
+        face_worker.stop()
         camera.stop()
 
 
