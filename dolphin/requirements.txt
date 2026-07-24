@@ -1,15 +1,11 @@
 # Deps for the dolphin YOLO/Neutron demo (target board).
 #
-# The working setup needs NO pip installs. Create the venv against system python3.14 with
-# --system-site-packages, which exposes the BSP's own, ABI-matched packages:
-#     /usr/bin/python3.14 -m venv --system-site-packages ~/dolphin/venv
-# That gives gi (GStreamer/Wayland), tflite_runtime (matched to the neutron delegate), cv2 and numpy.
+# The working setup needs NO pip installs. The board's system python3 is 3.13, and the BSP ships
+# gi (GStreamer/Wayland), tflite_runtime (ABI-matched to the neutron delegate), cv2 and numpy for it.
+# Create the venv with --system-site-packages so it can see them:
+#     python3 -m venv --system-site-packages ~/dolphin/venv
 #
-# Why not python3.13: --system-site-packages on a 3.13 venv cannot see the 3.14 system packages, and
-# the neutron delegate is ABI-locked to the 3.14 tflite_runtime (ai-edge-litert on 3.13 segfaults on
-# the delegate). CPU-only works on 3.13; the NPU path does not.
-#
-# The two lines below are only needed if you insist on a fully isolated venv (not recommended here);
-# gi and a delegate-matched tflite_runtime still won't be pip-satisfiable, so the NPU path won't run.
+# The two lines below are only needed for a fully isolated venv (not recommended here: gi and a
+# delegate-matched tflite_runtime are not pip-satisfiable, so the NPU path would not run).
 # numpy
 # opencv-python-headless
