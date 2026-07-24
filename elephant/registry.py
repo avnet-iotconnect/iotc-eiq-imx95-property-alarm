@@ -38,9 +38,14 @@ class Registry:
         self._save()
 
     def identify(self, tracks: list[Track]) -> None:
-        """Fill Track.identity for any track whose face embedding matches a registered user."""
+        """Fill Track.identity (matched name) and Track.match_score (best cosine, for the debug overlay)."""
         for track in tracks:
-            track.identity = self._match(track.embedding) if track.embedding is not None else None
+            if track.embedding is None:
+                track.identity, track.match_score = None, None
+                continue
+            name, best_similarity = self._best_match(track.embedding)
+            track.identity = name
+            track.match_score = best_similarity
 
     def is_person_present(self, tracks: list[Track]) -> bool:
         return any(track.class_name == "person" for track in tracks)
@@ -52,14 +57,15 @@ class Registry:
     def user_names(self) -> list[str]:
         return sorted(self._embeddings)
 
-    def _match(self, embedding: np.ndarray) -> str | None:
-        """Best registered user above the cosine threshold, or None (unfamiliar face)."""
-        best_name, best_similarity = None, self.match_threshold
-        for name, stored in self._embeddings.items():
-            similarity = _cosine_similarity(embedding, stored)
-            if similarity >= best_similarity:
-                best_name, best_similarity = name, similarity
-        return best_name
+    def _best_match(self, embedding: np.ndarray) -> tuple[str | None, float | None]:
+        """Return (name if best cosine clears the threshold else None, best cosine or None if no users)."""
+        if not self._embeddings:
+            return None, None
+        best_name, best_similarity = max(
+            ((name, _cosine_similarity(embedding, stored)) for name, stored in self._embeddings.items()),
+            key=lambda pair: pair[1],
+        )
+        return (best_name if best_similarity >= self.match_threshold else None), best_similarity
 
     def _load(self) -> dict[str, np.ndarray]:
         if not self.db_path.exists():

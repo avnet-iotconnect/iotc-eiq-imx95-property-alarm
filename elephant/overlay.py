@@ -62,20 +62,36 @@ class Overlay:
     def _draw_boxes(self, context: cairo.Context) -> None:
         context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         context.set_font_size(16)
-        context.set_line_width(2.0)
         for track in self.tracks:
             x1, y1, x2, y2 = track.box
             color = color_for(track.short_id)
+            context.set_line_width(2.0)
             context.set_source_rgb(*color)
             context.rectangle(x1, y1, x2 - x1, y2 - y1)
             context.stroke()
             _draw_text(context, self._label_for(track), x1 + 3, max(y1 - 5, 14), color)
+            self._draw_face_box(context, track)
+
+    def _draw_face_box(self, context: cairo.Context, track: Track) -> None:
+        """Debug: show the detected face inside the person - cyan box + best match cosine (or 'no match')."""
+        if track.face_box is None:
+            return
+        fx1, fy1, fx2, fy2 = track.face_box
+        context.set_line_width(1.5)
+        context.set_source_rgb(0.15, 0.90, 0.90)  # cyan
+        context.rectangle(fx1, fy1, fx2 - fx1, fy2 - fy1)
+        context.stroke()
 
     def _label_for(self, track: Track) -> str:
-        """A recognized person shows their name; anyone/anything else shows the bare id + class."""
+        """Debug-friendly: recognized name, else the best cosine, else face-seen, else the bare class."""
         tag = f"#{track.short_id}" if track.short_id else "#-"
         if track.identity is not None:
-            return f"{tag} {track.identity}"
+            score = f" ({track.match_score:.2f})" if track.match_score is not None else ""
+            return f"{tag} {track.identity}{score}"  # score is None on the just-registered frame
+        if track.match_score is not None:
+            return f"{tag} ? {track.match_score:.2f}"          # face seen, closest user below threshold
+        if track.face_box is not None:
+            return f"{tag} face (no users)"                     # face detected but nobody registered yet
         return f"{tag} {track.class_name} {track.score:.2f}"
 
     def _draw_hud(self, context: cairo.Context) -> None:

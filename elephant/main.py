@@ -109,10 +109,13 @@ def report_summary(steady_state: list[dict[str, float]]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--model", required=True, help="path to the YOLO .tflite model")
-    parser.add_argument("--delegate", action="store_true", help="run YOLO through the Neutron NPU delegate")
-    parser.add_argument("--yunet", default="face_detection_yunet_2023mar.onnx", help="YuNet ONNX path")
-    parser.add_argument("--sface", default="face_recognition_sface_2021dec.onnx", help="SFace ONNX path")
+    parser.add_argument("--model", default="yolo11n_neutron.tflite", help="path to the YOLO .tflite model")
+    parser.add_argument("--delegate", action="store_true",
+                        help="force the Neutron NPU delegate (auto-on when the model name contains 'neutron')")
+    parser.add_argument("--yunet", default="face_detection_yunet_2023mar.onnx", help="YuNet ONNX (detect)")
+    parser.add_argument("--sface", default="face_recognition_sface_2021dec.onnx", help="SFace ONNX (align only)")
+    parser.add_argument("--sface-model", default="",
+                        help="SFace embedder tflite (default: sface_neutron.tflite with --delegate, else sface_int8.tflite)")
     parser.add_argument("--db", default="faces.json", help="persistent face database (name -> embedding)")
     parser.add_argument("--command-file", default="command.txt", help="file polled for register/arm/disarm")
     parser.add_argument("--device", default="/dev/video4", help="v4l2 camera device (C920 capture node)")
@@ -128,16 +131,21 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    # A '..._neutron.tflite' model carries a NeutronGraph op only the delegate can run, so the backend
+    # must follow the model - infer it from the name so `./run.sh` just works without remembering --delegate.
+    use_neutron = args.delegate or "neutron" in Path(args.model).name
     # CPU path parallelizes convs across all cores; NPU path runs them on Neutron, so extra CPU threads
     # only oversubscribe the camera/preview/face threads. Auto-pick (same reasoning as dolphin).
-    num_threads = args.threads if args.threads > 0 else (2 if args.delegate else 6)
+    num_threads = args.threads if args.threads > 0 else (2 if use_neutron else 6)
 
-    detector = Detector(args.model, args.delegate, num_threads, args.conf, args.iou)
+    detector = Detector(args.model, use_neutron, num_threads, args.conf, args.iou)
     print(detector.describe())
-    face = FaceRecognizer(args.yunet, args.sface)
+    sface_model = args.sface_model or ("sface_neutron.tflite" if use_neutron else "sface_int8.tflite")
+    print(f"Face embed : {sface_model} ({'Neutron NPU' if use_neutron else 'CPU'})")
+    face = FaceRecognizer(args.yunet, args.sface, sface_model, use_neutron=use_neutron)
     registry = Registry(args.db)
     tracker = Tracker()
-    overlay = Overlay(args.width, args.height, backend="NPU" if args.delegate else "CPU")
+    overlay = Overlay(args.width, args.height, backend="NPU" if use_neutron else "CPU")
     app = AntiTheftApp(registry, overlay)
     commands = CommandFile(args.command_file)
     print(f"Known users: {', '.join(registry.user_names) or '(none - first person will trip the alarm)'}")

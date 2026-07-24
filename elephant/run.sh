@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # run.sh - launch the elephant pilot ON THE BOARD.
-#   NPU path : ./run.sh --model yolo11n_neutron.tflite --delegate
-#   CPU path : ./run.sh --model yolo11n_int8.tflite
-# YOLO uses the NPU with --delegate; the face models (YuNet + SFace) always run on the CPU.
+#   NPU (default): ./run.sh                              # YOLO + SFace on Neutron
+#   CPU baseline : ./run.sh --model yolo11n_int8.tflite  # everything on CPU
+# The backend follows the model name: a '..._neutron.tflite' model auto-uses the delegate.
+# YuNet face detection always runs on the CPU either way.
 # Uses the project venv at ~/elephant/venv by default (see requirements.txt - no pip installs needed).
 # Override with PYTHON=/path/to/python ./run.sh ...
 # Register a user while it runs:  echo 'register user Joe' > command.txt

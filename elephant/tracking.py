@@ -58,6 +58,8 @@ class Track:
     misses: int = 0  # consecutive frames this track went unmatched (coasting)
     identity: str | None = None  # a recognized user's name, filled by face.py when a match is found
     embedding: np.ndarray | None = field(default=None, repr=False)  # this track's latest face vector
+    face_box: list[int] | None = None  # detected face box (xyxy, frame px), for the debug overlay
+    match_score: float | None = None  # best cosine to any registered user (even below the match threshold)
 
 
 class Tracker:
