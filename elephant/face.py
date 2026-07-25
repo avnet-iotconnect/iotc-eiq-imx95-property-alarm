@@ -94,6 +94,9 @@ class FaceRecognizer:
         crop_height, crop_width = crop_bgr.shape[:2]
         self.detector.setInputSize((crop_width, crop_height))
         _, faces = self.detector.detect(crop_bgr)
-        if faces is None or len(faces) == 0:
+        if faces is None:
             return None
-        return max(faces, key=lambda face: face[2] * face[3])  # face[2],[3] = width,height
+        valid = [face for face in faces if np.all(np.isfinite(face[:4]))]  # YuNet can emit inf/nan rows
+        if not valid:
+            return None
+        return max(valid, key=lambda face: face[2] * face[3])  # face[2],[3] = width,height
