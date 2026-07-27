@@ -5,7 +5,7 @@
   "playback_device": "mqs",
 
   "_micfil_range": "Hardware gain on the onboard PDM mic, 0-15, ships at 6. Ignored for other capture devices. Tune with falcon/mic-check.py: highest value keeping speech peaks under about -6 dBFS.",
-  "micfil_range": 10,
+  "micfil_range": 12,
 
   "_gains": "Digital gain applied in software. playback_gain matters because mqs has no hardware volume control at all.",
   "capture_gain": 1.0,
