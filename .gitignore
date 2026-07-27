@@ -8,6 +8,7 @@
 */__pycache__/
 *.pyc
 .venv/
+/venv/
 
 
 # conversion artifacts:
@@ -16,4 +17,11 @@
 /*.onnx
 /*.tflite
 /*_saved_model/
+
+# eIQ payload: fetched by scripts/local-setup.sh, never committed
+/nxp-lib/
+
+# When making the eiq demo tarball:
+dm-eiq-genai-flow-demonstrator/
+*.tgz
 
