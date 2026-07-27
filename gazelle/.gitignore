@@ -1,0 +1,18 @@
+# NXP's payload -- proprietary, 139 MB, fetched by install.sh. Never committed.
+/nxp-lib/
+
+# SmolVLM weights, pulled from Hugging Face by --prefetch
+/models/
+
+# The board's virtualenv
+/venv/
+
+# Runtime state, written on the board: registered faces, alarm state, the last VLM keyframe
+/faces.json
+/state.json
+/scene.jpg
+/command.txt
+
+# Vision models: built on the host, pushed by deploy.sh
+*.tflite
+*.onnx
