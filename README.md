@@ -69,10 +69,12 @@ ps -eaf | grep proxy_ara240
 
 ## eIQ Neutron SDK (model converter)
 
-On your PC download the eIQ Neutron SDK from the
+On your PC download the eIQ Neutron SDK **version 3.0.0** from the
 
 [eIQ® Toolkit for End-to-End Model Development and Deployment](https://www.nxp.com/design/design-center/software/eiq-ai-development-environment/eiq-toolkit-for-end-to-end-model-development-and-deployment:EIQ-TOOLKIT#downloads)
-web page.
+web page. 
+
+Version 3.0.0 matches what is on the `L6.18.2-1.0.0_MX95` image.
 
 Expand it into a directory parallel to this repo `../imx-eiq-neutron-sdk`
 
@@ -114,4 +116,14 @@ bash scripts/yolo-convert-neutron.sh
 ```bash
 bash run.sh --model yolo11n_neutron.tflite --delegate
 ```
+
+# Troubleshooting
+
+- If a demo abruptly power cycles the board, the most likely issue is power delivery.
+Plug the board into a high power USB port, using the cable supplied with the board or 
+to be 100% sure, plug in a phone USB charger cable into the power USB-C port. 
+
+- The USB camera may appear as /dev/video4 or /dev/video52 etc. when plugged in.
+The best solution is power the board (power button or re-plug USB power)
+**while the USB camera is plugged in**. If a board is running, issue a `poweroff` to cleanly shutdown. 
 

@@ -180,7 +180,7 @@ def parse_args() -> argparse.Namespace:
                         help="SFace embedder tflite (default: sface_neutron.tflite with --delegate, else sface_int8.tflite)")
     vision.add_argument("--face-interval", type=float, default=0.2,
                         help="min seconds between async face-recognition passes (0.2 = ~5 Hz)")
-    vision.add_argument("--device", default="/dev/video4", help="v4l2 camera device (C920 capture node)")
+    vision.add_argument("--device", default="/dev/video2", help="v4l2 camera device (C920 capture node)")
     vision.add_argument("--width", type=int, default=640, help="camera capture width")
     vision.add_argument("--height", type=int, default=480, help="camera capture height")
     vision.add_argument("--conf", type=float, default=0.25, help="minimum YOLO score to keep a detection")
@@ -253,7 +253,7 @@ def restart_process() -> None:
 
     eIQ's models stop working an hour after they load and a stand cannot rely on someone noticing;
     everything a visitor set is on disk, so coming back costs the ~15 s of loading. exec rather than
-    fork means one pid and no orphan holding /dev/video4 - how gazelle lost its camera twice. The
+    fork means one pid and no orphan holding /dev/video2 - how gazelle lost its camera twice. The
     sleep gives GStreamer's teardown and the audio device a moment before they are reopened.
     """
     sleep(1.0)
