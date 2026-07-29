@@ -1,0 +1,29 @@
+# NXP's payload -- proprietary, 139 MB, fetched by install.sh. Never committed.
+/nxp-lib/
+
+# SmolVLM weights, pulled from Hugging Face by --prefetch
+/models/
+
+# The board's virtualenv
+/venv/
+
+# Runtime state, written on the board: registered faces, alarm state, the last VLM keyframe,
+# the snapshot that /IOTCONNECT uploads
+/faces.json
+/state.json
+/scene.jpg
+/capture.jpg
+/command.txt
+
+# /IOTCONNECT device credentials: yours, per device, and a private key. Never committed.
+# device-cert.pem / device-key.pem are the two names the demo looks for; the rest of the patterns
+# catch the /IOTCONNECT download before you have renamed it.
+/iotcDeviceConfig.json
+/*-crt.pem
+/*-cert.pem
+/*-key.pem
+/*-pkey.pem
+
+# Vision models: built on the host, pushed by deploy.sh
+*.tflite
+*.onnx
