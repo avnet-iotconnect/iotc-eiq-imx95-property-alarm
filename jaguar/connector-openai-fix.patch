@@ -1,0 +1,107 @@
+--- a/models.py
++++ b/models.py
+@@ -13,6 +13,7 @@
+ from typing import Any, Literal, Optional, Union, Self
+ 
+ from pathlib import Path
++from uuid import uuid4
+ 
+ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator, ValidationError
+ 
+@@ -67,13 +68,25 @@
+ 
+ 
+ class ChatMessageToolCall(BaseModel):
++    # OpenAI requires "id" and "type" on every tool call. A client ties the tool
++    # *result* back to the *call* by id, so without one an agent framework cannot
++    # say which call it just answered: strands-agents logs "incomplete tool use
++    # block, skipping", drops the call, and the model then reissues it forever.
++    id: str = Field(default_factory=lambda: f"call_{uuid4().hex[:24]}")
++    type: Literal["function"] = "function"
+     function: ChatMessageFunction
++    # Only meaningful on streaming deltas, where a client assembles one call from
++    # several chunks keyed by index. Left None on complete, non-streaming calls.
++    index: Optional[int] = None
+ 
+ 
+ class ChatMessage(BaseModel):
+     role: str
+     content: Optional[Union[str, list[ContentPartType]]] = None
+     tool_calls: Optional[list[ChatMessageToolCall]] = None
++    # Sent by the client on role="tool" messages to name the call being answered.
++    # Undeclared, pydantic drops it and the linkage is lost on the way in too.
++    tool_call_id: Optional[str] = None
+ 
+     @model_validator(mode="after")
+     def validate_content_exists(self):
+@@ -174,6 +187,9 @@
+ class Choice(BaseModel):
+     index: int
+     message: ChatMessage
++    # OpenAI always reports why generation stopped; "tool_calls" is how a client
++    # knows to execute something rather than show the text to the user.
++    finish_reason: Optional[str] = None
+ 
+ 
+ class Usage(BaseModel):
+--- a/Llm.py
++++ b/Llm.py
+@@ -323,9 +323,17 @@
+ 
+         num_output_tokens = int(self.model._generated_tokens_count)
+ 
++        message = self.post_parse_request(response)
++
+         return ChatResponse(
+             id=str(f"chatcmpl-{uuid.uuid4()}"),
+-            choices=[Choice(index=0, message=self.post_parse_request(response))],
++            choices=[
++                Choice(
++                    index=0,
++                    message=message,
++                    finish_reason="tool_calls" if message.tool_calls else "stop",
++                )
++            ],
+             created=int(time.time()),
+             model=self.name,
+             usage=Usage(
+@@ -354,12 +362,16 @@
+                 delta = ChunkDelta(content=current_response)
+             else:
+                 try:
+-                    model_tool_call = json.loads(current_response)
++                    # Strip escapes the same way the non-streaming parser does
++                    # (ToolParser.parse_response), or a call the blocking endpoint
++                    # accepts is rejected here as "invalidly formed".
++                    model_tool_call = json.loads(current_response.replace("\\", ""))
+                     tool_call = ChatMessageToolCall(
++                        index=0,  # the state machine emits at most one call per response
+                         function=ChatMessageFunction(
+                             name=model_tool_call["name"],  # Now safe to use direct access
+                             arguments=json.dumps(model_tool_call.get("arguments", {})),
+-                        )
++                        ),
+                     )
+                     delta = ChunkDelta(tool_calls=[tool_call])
+                 except:
+@@ -371,7 +383,10 @@
+                 object="chat.completion.chunk",
+                 created=time.time(),
+                 model=self.name,
+-                choices=[ChunkChoice(index=msg_index, delta=delta, finish_reason=None)],
++                # index identifies the *choice*, not the chunk. Only one choice is
++                # ever generated, so it is always 0; incrementing it made clients
++                # read a three-chunk reply as three separate choices.
++                choices=[ChunkChoice(index=0, delta=delta, finish_reason=None)],
+             )
+             return serialize_chunk(response_chunk)
+ 
+@@ -493,7 +508,7 @@
+             object="chat.completion.chunk",
+             created=time.time(),
+             model=self.name,
+-            choices=[ChunkChoice(index=msg_index, delta=ChunkDelta(), finish_reason=finish_reason)],
++            choices=[ChunkChoice(index=0, delta=ChunkDelta(), finish_reason=finish_reason)],
+         )
+         yield serialize_chunk(response_chunk)
+ 

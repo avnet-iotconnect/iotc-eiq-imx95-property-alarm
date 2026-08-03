@@ -1,0 +1,69 @@
+{
+    "log_level": "INFO",
+    "model_config_path": "/usr/share/llm/{}/",
+    "model_tokenizer_path": "/usr/share/llm/{}/tokenizer",
+    "use_tool_guided_generation": true,
+    "semantic_cache": {
+        "enabled": false,
+        "similarity_threshold": 0.85,
+        "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+        "max_cache_size": 1000,
+        "max_size_percentage_trigger": 0.95,
+        "eviction_percentage": 0.1,
+        "similarity_metric": "cosine"
+    },
+    "llm_params": {
+        "generate_max_tokens": 512,
+        "seed": 42,
+        "temperature": 0.7,
+        "top_k": 20,
+        "top_p": 0.8,
+        "repeat_penalty": 1.12,
+        "repeat_last_n": 32,
+        "ngram_penalty": 10,
+        "frequency_penalty": 1.12,
+        "suppress_penalty": 100.0
+    },
+    "available_models": [
+        {
+            "name": "Qwen2.5-Coder-1.5B",
+            "description": "Qwen2.5-coder 1.5B instance with code generation support.",
+            "type": "text",
+            "tool_calling": "native",
+            "enabled": false,
+            "max_prompt_size": 3072
+        },
+        {
+            "name": "Qwen2.5-7B-Instruct",
+            "description": "Qwen2.5 7B Instruct Unimodal model",
+            "type": "text",
+            "tool_calling": "native",
+            "max_prompt_size": 3072,
+            "enabled": true
+        },
+        {
+            "name": "Qwen2.5-VL-7B-Instruct",
+            "description": "Qwen2.5-VL 7B instance with vision and language capabilities.",
+            "type": "qwen_vl_video",
+            "tool_calling": "no",
+            "max_prompt_size": 2047,
+            "enabled": false
+        },
+        {
+            "name": "qwen2_5-vl-3b-video",
+            "description": "Qwen2.5-VL 3B instance with Video inference capabilities.",
+            "type": "qwen_vl_video",
+            "tool_calling": "no",
+            "max_prompt_size": 2047,
+            "enabled": false
+        },
+        {
+            "name": "qwen2.5-image-3B",
+            "description": "Qwen2.5-VL 3B instance with Image inference capabilities.",
+            "type": "qwen_vl_image",
+            "tool_calling": "no",
+            "max_prompt_size": 2047,
+            "enabled": false
+        }
+    ]
+}
