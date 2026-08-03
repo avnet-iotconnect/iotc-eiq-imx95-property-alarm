@@ -13,7 +13,7 @@ from strands.models.openai import OpenAIModel
 
 # The board, and the connector's port. The connector must have been started with
 # --host 0.0.0.0 for this to be reachable from anywhere but the board itself.
-BASE_URL = "http://192.168.38.203:8000/v1"
+BASE_URL = "http://192.168.38.203:3000/v1"
 
 
 @tool

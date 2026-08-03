@@ -24,14 +24,12 @@ context is 4096 tokens total, prompt plus generation, so 3072 + 512 fits.
 
 To start the connector from scratch instead, on the board:
 
-    cd /root/jaguar-aaf
-    # enable the model you want in config/server_config.json, then:
-    ./.venv/bin/connector --host 0.0.0.0 --port 8000
+    cd /root/jaguar/connector && ./run.sh     # restarts it if already running
 
 Two things about that config are worth knowing, both explained in
 work/NXP-eiq-aaf-connector-issues.md: temperature must not be 0.0 (the shipped
 default makes every request fail), and the connector needs our tool-call patch
-(jaguar/apply-connector-patch.sh) or strands drops every call and loops.
+(jaguar/connector/apply-patch.sh) or strands drops every call and loops.
 """
 
 import sys

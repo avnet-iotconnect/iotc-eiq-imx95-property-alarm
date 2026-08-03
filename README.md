@@ -12,7 +12,10 @@ guide to flash the software
 
 ## ARA2 SDK
 
-**Do this first**. This SDK will also resize the installed image so that the rest of the project and large models can fit.
+**Do this first**. This SDK will also resize the installed image 
+so that the rest of the project and large models can fit. 
+This deb will alsso install the `uv` tool, which will be handy later,
+as well as optimum_ara weel, which we will use later for large models on the Ara240.
 
 More info at [https://github.com/nxp-imx/rt-sdk-ara2](https://github.com/nxp-imx/rt-sdk-ara2)
 
