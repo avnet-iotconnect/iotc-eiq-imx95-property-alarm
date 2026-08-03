@@ -88,11 +88,38 @@ with mcp_client:
     # a dropped connection. Next step is picking a handful of these by name.
     mcp_tools = mcp_client.list_tools_sync()
     print(f"MCP tools ({len(mcp_tools)}):")
-    for t in mcp_tools:
-        print(f"  {t.tool_name}")
 
     tools = [get_time, alert]
 
+    # MCP tools (19):
+    #   auth_status
+    #   device_list
+    #   device_get
+    #   device_create
+    #   device_delete
+    #   device_set_active
+    #   generate_device_cert
+    #   entity_list
+    #   entity_get
+    #   entity_descendants
+    #   user_list
+    #   template_list
+    #   template_get
+    #   template_create
+    #   template_delete
+    #   telemetry_latest_value
+    #   telemetry_recent
+    #   telemetry_history
+    #   command_send
+    
+    for t in mcp_tools:
+        
+        if t.tool_name in ['auth_status', 'entity_get']:
+            print(f"  *{t.tool_name}")
+            tools.append(t)
+        else:
+            print(f"   {t.tool_name}")
+    
     # model= is not optional: without it strands quietly falls back to Bedrock.
     agent = Agent(model=model, tools=tools)
     print(f"Agent loaded with {len(tools)} tools")
