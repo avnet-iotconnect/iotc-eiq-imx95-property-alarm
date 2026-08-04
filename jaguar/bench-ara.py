@@ -11,7 +11,7 @@ import time
 
 from openai import OpenAI
 
-client = OpenAI(api_key="unused", base_url="http://192.168.38.203:8000/v1")
+client = OpenAI(api_key="unused", base_url="http://192.168.38.203:3000/v1")
 MODEL = "Qwen2.5-7B-Instruct"
 PROMPT = "Explain in about 150 words what an NPU is and why edge AI benefits from one."
 
