@@ -121,23 +121,36 @@ Neither runs on the board — the converter is host-side only.
 
 ## Deploying koala (a note, not a deploy script)
 
-The whole deployment is the `koala/` directory plus the converted models. Put the models where the
-demo expects them, copy the lot over, then run the two hooks on the board:
+The whole deployment is the `koala/` directory plus the converted models. Both are copied straight
+to the board — nothing is staged inside the repo, so the working copy stays exactly what is
+committed:
 
 ```bash
-mkdir -p koala/models && cp work/models/* koala/models/     # host: what the converter made
-scp -r koala root@192.168.38.203:                           # host: code, config and models
+TGT=root@192.168.38.203 # your board's IP
+cd koala/ # or another pilot dir
+scp -r * $TGT:
+ssh $TGT 'mkdir -p koala/models'
+scp ../work/models/* $TGT:pm/models/         # host: what the converter made
+scp work/iotcDeviceConfig.json $TGT:pm/
+# the app will look for these two fixed names for cert and private key:
+scp work/*-crt.pem $TGT:pm/device-crt.pem 
+scp work/*-key.pem $TGT:pm/device-key.pem # 
 
-ssh root@192.168.38.203
-cd koala && ./install.sh      # once: eIQ payload, espeak-ng, venv
-./run.sh                      # the demo
+
+ssh $TGT
+cd pm
+./install.sh      # once: eIQ payload, espeak-ng, venv
+./run.sh          # run the demo
 ```
+
+Rename the certificate pair to `device-cert.pem` / `device-key.pem` on the way, or once on the
+board — those are the two fixed names the demo looks for.
 
 The LLM behind the `ask` command is a separate install and a separate process, and the demo runs
 without it:
 
 ```bash
-cd ~/koala/connector && ./install.sh && ./run.sh
+cd ~/pm/connector && ./install.sh && ./run.sh
 ```
 
 `install.sh` does not install the board itself — the BSP image, the rt-sdk-ara2 `.deb` and the

@@ -20,11 +20,11 @@ What flows each way:
     S3    `snapshot` writes capture.jpg and uploads it; /IOTCONNECT timestamps each version
     KVS   the signalling channel ARN and the AWS credentials `webrtc.py` signs its socket with
 
-Two conveniences worth knowing about. `snapshot` and `scene` get their ack **rewritten** here, and
-only here: the cloud wants "Snapshot uploaded" (which is a different fact from "snapshot saved") and
-a short "Scene described" rather than a paragraph - the paragraph goes to the `scene` attribute
-instead, once. `ask` is deliberately *not* rewritten: the model's answer is the whole point, so it
-goes back in the ack (trimmed to `MAX_ACK_CHARS`) as well as into the `answer` attribute in full.
+Three acks get **rewritten** here, and only here, because the dashboard shows an ack as a *tooltip*:
+a sentence is readable there, a paragraph is not. `snapshot` says "Snapshot uploaded", which is a
+different fact from "snapshot saved"; `scene` and `ask` say "Scene described" and "Answered", and
+the text somebody actually wanted arrives as the `scene` and `answer` attributes instead - **once
+each**, by `set_once`, so a one-off answer is never repeated on the next tick.
 
 `ask` is also the one command whose argument is a sentence rather than a name, and the SDK hands
 arguments over already split on whitespace - so joining them back is what reconstructs the question.
@@ -289,6 +289,8 @@ class IotcClient:
                 is_ok, text = self._upload_capture()
             elif is_ok and verb == commands.DESCRIBE_SCENE:
                 text = "Scene described."  # the description itself went out as the scene attribute
+            elif is_ok and verb == commands.ASK:
+                text = "Answered."         # likewise: the answer went out as the answer attribute
         except Exception as error:
             logger.exception("c2d %s failed", verb)
             is_ok, text = False, f"Failed: {type(error).__name__}"

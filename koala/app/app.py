@@ -265,8 +265,10 @@ class AntiTheftApp:
         result of the model having *done* something - its tools run these same handlers, so
         "please disarm the alarm" arrives here and leaves through `_disarm`.
 
-        The answer also goes out as a one-shot `answer` telemetry attribute, because a C2D ack is
-        capped at 200 characters and the model is not reliably that brief.
+        The answer goes to the cloud as a one-shot `answer` telemetry attribute - once, not on every
+        tick - because the dashboard renders a C2D ack as a tooltip, where a paragraph is unreadable.
+        The ack says "Answered"; `iotc.py` does that rewrite, the same way it does for `scene`.
+        Voice, which has no such limit, would speak this whole string.
         """
         if self.ask_agent is None:
             raise CommandError("The assistant is not available. Start the connector on the Ara-240.")

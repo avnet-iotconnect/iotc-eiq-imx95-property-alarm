@@ -135,8 +135,13 @@ dashboard: ask please disarm the alarm
    │                                                            Ara-240 DNPU, 7B resident
    │                                                                 │
    │                        app.on_command(DISARM) ◄── tool call ◄───┘
-   └─◄ ack "The alarm has been disarmed."  + the same text as the `answer` attribute
+   └─◄ ack "Answered."   and the answer itself, once, as the `answer` attribute
 ```
+
+**Read the answer in telemetry, not in the ack.** The dashboard renders an acknowledgement as a
+tooltip, where anything longer than a few words is unreadable, so `ask` is acked the way `scene` is:
+a short confirmation, with the text itself sent once as an attribute. Voice has no such limit — if
+`ask` is ever wired to the microphone, the whole answer is what gets spoken.
 
 Eight tools are offered: `get_time`, `get_status`, `arm_alarm`, `disarm_alarm`, `register_user`,
 `unregister_user`, `lock_object`, `unlock_object`. Adding a ninth is a docstring and a one-line call
@@ -168,7 +173,8 @@ To try the whole path without a camera, models or even a board, from the host:
 
 ### Set the device up
 
-The demo needs three files in this directory, all of them yours and none of them committed:
+The demo needs three files beside `main.py` **on the board**, all of them yours and none of them in
+this repo:
 
 ```
 iotcDeviceConfig.json      the cog icon in your device's info panel
@@ -182,9 +188,10 @@ fixed names instead, so that nothing in the deployment has to know which device 
 renaming once, when you configure a board, is cheaper than teaching every script to parse JSON.
 Point somewhere else with `--iotc-config`, `--iotc-cert`, `--iotc-key`.
 
-Create the device from the **alrmtheft** template (`files/alrmtheft.json` here) — it declares the
-seven telemetry attributes and the ten commands below, and the names have to match. koala's copy
-adds two things to the one iguana shipped: the `ask` command and the `answer` attribute.
+Create the device from the **alrmtheft** template (`files/alrmtheft.json`, at the top of this repo —
+it configures the cloud, and nothing on the board reads it). It declares the seven telemetry
+attributes and the ten commands below, and the names have to match. koala added two of them: the
+`ask` command and the `answer` attribute.
 Two template settings are not in that file and have to be ticked in the web UI:
 
 | setting | what breaks without it |
@@ -206,7 +213,7 @@ Every 4 seconds, and immediately whenever the alarm state changes:
 | `objects` | `Nick, person, laptop` | the tracker, names filled in by face recognition |
 | `fps` | `27.4` | the frame loop, twice a second |
 | `scene` | the VLM's answer | **once**, after a `scene` command — not repeated afterwards |
-| `answer` | the LLM's answer, in full | **once**, after an `ask` command — the ack is capped at 200 chars |
+| `answer` | the LLM's answer, in full | **once**, after an `ask` command — this is where to read it |
 | `version`, `sdk_version` | `koala-1.0`, `1.3.0` | constants |
 
 ### What comes in
@@ -220,7 +227,7 @@ Every 4 seconds, and immediately whenever the alarm state changes:
 | `scene` | optional question | `Scene described.` — the text itself goes to the `scene` attribute |
 | `snapshot` | — | `Snapshot uploaded.` (S3) or the reason it was not |
 | `restart` | — | `Restarting.`, then the process comes back three seconds later |
-| `ask` | a question, in words | the LLM's answer — see above. 10–40 s |
+| `ask` | a question, in words | `Answered.` — the answer itself goes to the `answer` attribute. 10–40 s |
 
 `scene` with no argument asks the model to describe what it sees. With one, the argument *is* the
 question: `scene what is the person wearing`.
@@ -358,12 +365,19 @@ voice therefore goes to disk: registered faces in `faces.json`, the armed flag a
 
 There is no deploy script, on purpose. The whole deployment is **this directory plus the models**,
 copied to the board — the same thing the finished project will do by unpacking a tarball, and one
-fewer file to keep in step. From the repo root, with the models already converted into `models/`
-(host-side; see the top-level README.md):
+fewer file to keep in step. From the repo root, with the models already converted (host-side; see
+the top-level README.md):
 
 ```bash
-scp -r koala root@<board>:                 # code, config, connector/, and models/
+scp -r koala root@<board>:                          # code, config, connector/
+ssh root@<board> 'mkdir -p koala/models'
+scp work/models/* root@<board>:koala/models/        # the converted models
+scp iotcDeviceConfig.json device-cert.pem device-key.pem root@<board>:koala/   # this device
 ```
+
+The models and the credentials go straight across rather than being staged in the repo, so nothing
+untracked ever sits in `koala/` on the host and `scp -r koala` always sends exactly what is
+committed.
 
 Then, on the board in `~/koala`:
 
@@ -428,16 +442,20 @@ koala/
 │   └── ask.py              the LLM's tools and prompt
 ├── applib/                 how it does it — cameras, models, faces, audio, cloud, WebRTC
 ├── config/                 audio.json, vocabulary.json
-├── files/                  alrmtheft.json — the /IOTCONNECT device template
 ├── agenttools/             checks for when something is wrong; not part of the demo
 ├── benchmarks/ara/         what the Ara-240 costs, with numbers
-├── connector/              NXP's LLM server — its own venv, own installer   (venv/ gitignored)
-├── models/                 converted on the host, copied over               gitignored
-├── nxp-lib/                NXP's eIQ payload — theirs, never edited         gitignored
-├── venv/                                                                    gitignored
-├── faces.json state.json scene.jpg capture.jpg   runtime state              gitignored
-└── iotcDeviceConfig.json device-cert.pem device-key.pem   your device       gitignored
+├── connector/              NXP's LLM server — its own venv, own installer   (venv/ not committed)
+├── models/                 converted on the host, copied over               not committed
+├── nxp-lib/                NXP's eIQ payload — theirs, never edited         not committed
+├── venv/                                                                    not committed
+├── faces.json state.json scene.jpg capture.jpg   runtime state              not committed
+└── iotcDeviceConfig.json device-cert.pem device-key.pem   your device       not committed
 ```
+
+The /IOTCONNECT **device template** is not here: `files/alrmtheft.json` at the top of the repo
+configures the cloud side, and nothing on the board ever reads it. Neither is a `.gitignore` — what
+this directory should not commit is described once, in the repo's own, because everything here gets
+copied to a board where a `.gitignore` means nothing.
 
 **Ours vs. theirs.** Everything above except `nxp-lib/` and `connector/{source,venv}` is our code,
 tracked and editable. NXP's eIQ payload is copied verbatim, **never edited** and never committed —

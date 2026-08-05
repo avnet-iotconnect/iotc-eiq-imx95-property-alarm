@@ -116,6 +116,13 @@
             "requiredParam": false,
             "requiredAck": true,
             "isOTACommand": false
+        },
+        {
+            "name": "ask",
+            "command": "ask",
+            "requiredParam": true,
+            "requiredAck": true,
+            "isOTACommand": false
         }
     ],
     "messageVersion": "2.1",
