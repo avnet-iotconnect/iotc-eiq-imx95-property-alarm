@@ -10,10 +10,11 @@ set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
 # NXP's eIQ payload: 139 MB of compiled modules and encrypted weights, hosted rather than committed
-# because the licence does not allow redistributing it. Built by scripts/dm-eiq-package.sh.
+# because the licence does not allow redistributing it. Built by scripts/package-dm-eiq.sh.
 wget -O /tmp/dm-eiq-payload.tgz https://downloads.iotconnect.io/partners/nxp/packages/dm-eiq-genai-flow-lib-v1.0.0.tgz
 mkdir -p nxp-lib
 tar xzf /tmp/dm-eiq-payload.tgz -C nxp-lib/
+rm -f /tmp/dm-eiq-payload.tgz
 
 # --system-site-packages so the BSP's numpy, cv2, gi, onnxruntime and tflite_runtime stay visible:
 # those are ABI-matched to the Neutron delegate and must never be replaced by pip's builds.
@@ -32,7 +33,23 @@ make -j"$(nproc)"
 make install
 popd >/dev/null
 
+print_warning="no"
+if [ ! -d models/ ]; then
+  wget -O /tmp/iotc-property-alarm-models.tgz https://downloads.iotconnect.io/partners/nxp/packages/iotc-property-alarm-models-v1.0.0.tgz
+  tar xzf /tmp/iotc-property-alarm-models.tgz
+  rm -f /tmp/iotc-property-alarm-models.tgz
+else
+  print_warning="yes" # after prefetch stdout spam
+fi
+
 ./run.sh --prefetch
+
+if [ "$print_warning" = "yes" ]; then
+  echo "=========================== WARNING ====================================="
+  echo "models/ directory found. Not installing to allow for local updates."
+  echo "If you intend to use the recommended models, delete the models/ directory"
+  echo "========================================================================="
+fi
 
 echo "Done. Next, execute:"
 echo "connector/install.sh && connector/run.sh # If you have Ara240"

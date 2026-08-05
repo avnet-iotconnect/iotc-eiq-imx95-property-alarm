@@ -237,8 +237,15 @@ the verb and hands it to the command pool; the acknowledgement is sent when the 
 `telemetry.wake()` cuts the 4-second wait short for anything worth seeing now, with a one-second
 floor so a flapping alarm cannot turn into an MQTT flood.
 
-Nothing here is load-bearing for the demo. No config, no certificates, no SDK, no network: the HUD
-says `cloud: unconfigured` or `cloud: offline` and the anti-theft demo runs exactly as before.
+**The cloud is required.** koala connects *before* it opens the camera or loads a model, on the main
+thread, and nothing catches the failure: a missing config, a certificate that is not the device's, a
+disabled device or an unreachable back end all stop the demo right there, printing whatever the SDK
+said. Guarding for those cases here would only reword the SDK's own error, worse. The deliberate way
+to run without a dashboard is `./run.sh --no-iotc`, which also takes the WebRTC stream with it —
+the channel ARN comes from /IOTCONNECT.
+
+Once connected, a network that comes and goes is *not* fatal: the publisher retries every 30 s and
+the HUD says `cloud: offline` in the meantime.
 
 ### Restarting
 
@@ -519,10 +526,12 @@ More light beats both. Face recognition wants the light anyway.
 - **A `scene` command from the dashboard takes tens of seconds too.** The acknowledgement arrives
   when the model is done, not when the command was received. That is the VLM, not the connection.
 - **File Support and Streaming are template settings, not code.** Without them `snapshot` cannot
-  upload and there is no signalling channel — `./iotc-check.py --webrtc` says which, in one line each.
-- **No cloud means no stream.** The channel ARN comes from /IOTCONNECT, so `--no-iotc`, a missing
-  certificate or a network that is not there take the WebRTC feed with them. The HDMI display is
-  unaffected, which is the point: the booth still works.
+  upload and there is no signalling channel — `agenttools/iotc-check.py --webrtc` says which, in one
+  line each.
+- **A cloud that will not connect stops the demo**, by design, before the camera is opened. Read the
+  SDK's error: it names the file or the reason. `--no-iotc` runs the vision half alone, and takes
+  the WebRTC stream with it, since the channel ARN comes from /IOTCONNECT. The HDMI display is
+  unaffected either way.
 - **`X-Amz-ClientId` is for viewers only.** A master signs its WebSocket URL with the channel ARN
   alone; include a ClientId and KVS rejects the signed request.
 - **The clock matters.** TLS rejects a certificate when the board's date is wrong. If a freshly
