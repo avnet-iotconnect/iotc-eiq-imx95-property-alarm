@@ -39,6 +39,13 @@
             "aggregateTypes": []
         },
         {
+            "name": "answer",
+            "type": "STRING",
+            "description": "The LLM's answer to the last 'ask' command, in full (the ack is truncated)",
+            "unit": "",
+            "aggregateTypes": []
+        },
+        {
             "name": "objects",
             "type": "STRING",
             "description": "What is detected on screen like Joe, Maria, person, laptop, remote",
