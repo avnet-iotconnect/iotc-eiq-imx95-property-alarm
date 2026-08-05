@@ -173,21 +173,6 @@ To try the whole path without a camera, models or even a board, from the host:
 
 ### Set the device up
 
-The demo needs three files beside `main.py` **on the board**, all of them yours and none of them in
-this repo:
-
-```
-iotcDeviceConfig.json      the cog icon in your device's info panel
-device-cert.pem            the certificate pair created with the device, RENAMED
-device-key.pem
-```
-
-**Rename the certificate pair.** /IOTCONNECT downloads them as `<duid>-crt.pem` / `<duid>-key.pem`,
-and hyena worked the names out by reading the duid back out of the config. koala expects the two
-fixed names instead, so that nothing in the deployment has to know which device it is holding —
-renaming once, when you configure a board, is cheaper than teaching every script to parse JSON.
-Point somewhere else with `--iotc-config`, `--iotc-cert`, `--iotc-key`.
-
 Create the device from the **alrmtheft** template (`files/alrmtheft.json`, at the top of this repo —
 it configures the cloud, and nothing on the board reads it). It declares the seven telemetry
 attributes and the ten commands below, and the names have to match. koala added two of them: the
@@ -361,48 +346,7 @@ along with the models, so at a trade show the demo *will* restart between visito
 voice therefore goes to disk: registered faces in `faces.json`, the armed flag and locked objects in
 `state.json`. Startup is about 15 seconds. koala can also do the restarting itself: see above.
 
-## Install
-
-There is no deploy script, on purpose. The whole deployment is **this directory plus the models**,
-copied to the board — the same thing the finished project will do by unpacking a tarball, and one
-fewer file to keep in step. From the repo root, with the models already converted (host-side; see
-the top-level README.md):
-
-```bash
-scp -r koala root@<board>:                          # code, config, connector/
-ssh root@<board> 'mkdir -p koala/models'
-scp work/models/* root@<board>:koala/models/        # the converted models
-scp iotcDeviceConfig.json device-cert.pem device-key.pem root@<board>:koala/   # this device
-```
-
-The models and the credentials go straight across rather than being staged in the repo, so nothing
-untracked ever sits in `koala/` on the host and `scp -r koala` always sends exactly what is
-committed.
-
-Then, on the board in `~/koala`:
-
-```bash
-./install.sh                  # once: eIQ payload, espeak-ng into /opt/dm-eiq, then a venv
-./run.sh --prefetch           # once, on a good network: pulls SmolVLM from Hugging Face
-agenttools/iotc-check.py      # once: does this device reach /IOTCONNECT, S3 and KVS?
-./run.sh                      # the demo
-```
-
-The LLM is installed and started separately, and can be left until later — the demo runs without it:
-
-```bash
-cd connector && ./install.sh  # once: ~1.2 GB, several minutes
-./run.sh                      # ~225 s to load the 7B onto the Ara-240; watch server.log
-```
-
-`install.sh` does *not* fetch the vision models: converting them needs the neutron-converter, which
-runs on the host only. It also does not touch `/usr` — everything it writes is in `nxp-lib/`,
-`/opt/dm-eiq` and `venv/`.
-
-If a previous pilot's venv is already on the board, copying it (`cp -a ~/iguana/{nxp-lib,venv}
-~/koala/`) beats a torch re-download — but then install packages with **`./venv/bin/python -m pip`**,
-not `./venv/bin/pip`: a copied venv's console scripts keep the absolute shebang they were created
-with, and `pip` will happily install into the venv it came from while reporting success.
+# Running
 
 Useful ways to run it:
 
@@ -449,7 +393,7 @@ koala/
 ├── nxp-lib/                NXP's eIQ payload — theirs, never edited         not committed
 ├── venv/                                                                    not committed
 ├── faces.json state.json scene.jpg capture.jpg   runtime state              not committed
-└── iotcDeviceConfig.json device-cert.pem device-key.pem   your device       not committed
+└── iotcDeviceConfig.json device-crt.pem device-key.pem   your device       not committed
 ```
 
 The /IOTCONNECT **device template** is not here: `files/alrmtheft.json` at the top of the repo

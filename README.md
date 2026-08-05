@@ -120,29 +120,26 @@ committed:
 ```bash
 IMX95=root@192.168.38.203 # your board's IP
 cd koala/ # or another pilot dir
-ssh $IMX95 'mkdir -p pm/models'
-scp -r * $IMX95:pm/
-scp ../work/models/* $IMX95:pm/models/         # host: what the converter made
-scp ../work/iotcDeviceConfig.json $TGT:pm/
+ssh $IMX95 'mkdir -p pa/models'
+scp -r * $IMX95:pa/
+scp ../work/models/* $IMX95:pa/models/         # host: what the converter made
+scp ../work/iotcDeviceConfig.json $TGT:pa/
 # the app will look for these two fixed names for cert and private key:
-scp ../work/*-crt.pem $IMX95:pm/device-crt.pem 
-scp ../work/*-key.pem $IMX95:pm/device-key.pem # 
+scp ../work/*-crt.pem $IMX95:pa/device-cert.pem 
+scp ../work/*-key.pem $IMX95:pa/device-pkey.pem # 
 
 
 ssh $TGT
-cd pm
+cd pa
 ./install.sh      # once: eIQ payload, espeak-ng, venv
 ./run.sh          # run the demo
 ```
-
-Rename the certificate pair to `device-cert.pem` / `device-key.pem` on the way, or once on the
-board — those are the two fixed names the demo looks for.
 
 The LLM behind the `ask` command is a separate install and a separate process, and the demo runs
 without it:
 
 ```bash
-cd ~/pm/connector && ./install.sh && ./run.sh
+cd ~/pa/connector && ./install.sh && ./run.sh
 ```
 
 `install.sh` does not install the board itself — the BSP image, the rt-sdk-ara2 `.deb` and the

@@ -35,8 +35,10 @@ The KVS half is a handover and nothing more. This file learns the channel ARN wh
 passes it, with a *callable* that returns current credentials, to the streamer `main.py` built. It
 does not know what WebRTC is, and `webrtc.py` does not know what /IOTCONNECT is.
 
-Nothing here is required to run the demo. No config, no certificates, no SDK installed, or no
-network - the pilot says so on the HUD and carries on being an anti-theft demo.
+**The cloud is required.** A demo that quietly runs without a dashboard is how a booth discovers at
+the worst moment that the certificate was wrong, so `connect()` raises and `main.py` does not catch
+it: the process stops, printing whatever the SDK said. `--no-iotc` is the deliberate way to run the
+vision half on its own. Once connected, a network that comes and goes is retried rather than fatal.
 """
 
 from __future__ import annotations
@@ -88,19 +90,14 @@ RECONNECT_WAIT_S = 30.0     # after a failure that took the client down entirely
 CREDENTIALS_MARGIN_S = 120  # refresh AWS credentials this long before they expire
 MAX_ACK_CHARS = 200         # acks are a status line, not a transcript
 
-# The device certificate pair, under fixed names so that nothing in the deployment has to know the
-# duid. Rename the files /IOTCONNECT gives you once, when you configure the board.
-CERT_FILENAME = "device-cert.pem"
-KEY_FILENAME = "device-key.pem"
-
 
 class IotcClient:
     """The /IOTCONNECT connection: one thread that publishes, and callbacks that hand work away."""
 
     def __init__(
         self, config_path: Path, service: CommandService, telemetry: TelemetryState,
-        capture_path: Path, app_version: str, streaming: "WebRtcStreamer | None" = None,
-        cert_path: Path | None = None, key_path: Path | None = None,
+        capture_path: Path, app_version: str, cert_path: Path, key_path: Path,
+        streaming: "WebRtcStreamer | None" = None,
         on_status: Callable[[str], None] | None = None,
         on_stream_status: Callable[[str], None] | None = None,
         interval_s: float = TELEMETRY_INTERVAL_S, is_verbose: bool = False,
@@ -111,7 +108,8 @@ class IotcClient:
         self.capture_path = capture_path
         self.app_version = app_version
         self.streaming = streaming  # started here, because only the cloud knows the channel ARN
-        self.cert_path, self.key_path = resolve_credentials(config_path, cert_path, key_path)
+        self.cert_path = cert_path
+        self.key_path = key_path
         self.on_status = on_status or (lambda status: None)
         self.on_stream_status = on_stream_status or (lambda status: None)
         self.interval_s = interval_s
@@ -126,9 +124,19 @@ class IotcClient:
 
     # --- lifecycle ----------------------------------------------------------------------------
 
-    def start(self) -> None:
-        """Connect and publish on our own thread: the identity REST call alone takes a second."""
+    def connect(self) -> None:
+        """Connect now, on the caller's thread, and **raise** if it cannot. Nothing is caught here.
+
+        The cloud is not optional: `main.py` calls this before the camera or the models are opened,
+        so a wrong certificate, an unreachable back end or a device that is disabled stops the demo
+        immediately with the SDK's own message, rather than an hour later with a HUD line nobody
+        read. `--no-iotc` is the way to run without it.
+        """
         self.on_status("cloud: connecting")
+        self._connect()
+
+    def start(self) -> None:
+        """Publish telemetry on our own thread, from here on. Call `connect()` first."""
         self._thread.start()
 
     def stop(self) -> None:
@@ -139,11 +147,13 @@ class IotcClient:
             self._client.disconnect()
 
     def _run(self) -> None:
+        """The publisher. A connection that *drops* is retried - only the first one is fatal."""
         while not self._stop.is_set():
             try:
-                self._connect()
+                if self._client is None:
+                    self._connect()
                 self._publish_loop()
-            except Exception as error:  # the cloud going away must never take the demo with it
+            except Exception as error:  # a network that comes and goes must not end the demo
                 logger.exception("iotconnect client failed")
                 print(f"[iotc] {type(error).__name__}: {error} -- retrying in "
                       f"{RECONNECT_WAIT_S:.0f}s")
@@ -338,23 +348,3 @@ class IotcClient:
         self.on_status("cloud: offline")
 
 
-def resolve_credentials(config_path: Path, cert_path: Path | None,
-                        key_path: Path | None) -> tuple[Path, Path]:
-    """The certificate pair beside the device config, unless the caller says otherwise.
-
-    Fixed names, not `<duid>-crt.pem` as hyena used. /IOTCONNECT does name a downloaded pair after
-    the device, but deriving the filename from the config means every deployment step has to know
-    the duid before it can copy a file. Renaming the pair once, at the point where a board is
-    configured, costs nothing and makes deployment - which is now just `scp -r koala root@board:` -
-    independent of which device it is holding.
-    """
-    return (cert_path or config_path.parent / CERT_FILENAME,
-            key_path or config_path.parent / KEY_FILENAME)
-
-
-def is_configured(config_path: Path) -> bool:
-    """True when there is something to connect with. Checked before the client is even built."""
-    if not IS_SDK_AVAILABLE or not config_path.exists():
-        return False
-    cert_path, key_path = resolve_credentials(config_path, None, None)
-    return cert_path.exists() and key_path.exists()

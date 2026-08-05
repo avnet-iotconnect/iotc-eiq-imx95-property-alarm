@@ -10,7 +10,7 @@ parsed by us.
     ./run.sh                                   # NPU for YOLO and SFace, voice on, cloud on, streaming
     ./run.sh --no-ask                          # everything except the LLM
     ./run.sh --no-webrtc                       # everything except the live video
-    ./run.sh --no-iotc                         # no cloud at all (also the answer if unconfigured)
+    ./run.sh --no-iotc                         # no cloud at all - the only way to run without it
     ./run.sh --no-voice                        # just the video loop, no eIQ payload needed
     ./run.sh --model models/yolo11n_int8.tflite  # full-CPU baseline
 
@@ -46,9 +46,11 @@ The video for the stream never passes through any of them: GStreamer's own threa
 overlay, hand the frame to the i.MX95's hardware H.264 encoder and deliver finished packets. See
 `camera.py` for the pipeline and `webrtc.py` for why that means no encoding on our CPU at all.
 
-The voice, /IOTCONNECT and WebRTC threads all do their own loading and connecting, so the picture is
-live in about a second. Watch the HUD's `voice:`, `cloud:`, `stream:` and `ask:` lines for when
-each is ready.
+/IOTCONNECT is connected up front, on this thread, before anything is opened: the cloud is required,
+so a bad certificate or an unreachable back end stops the demo there rather than being a line on a
+HUD nobody reads. `--no-iotc` is the way to run without it. Voice and WebRTC do load and connect on
+their own threads, so the picture is live a second after that. Watch the HUD's `voice:`, `cloud:`,
+`stream:` and `ask:` lines for when each is ready.
 """
 
 from __future__ import annotations
@@ -245,13 +247,12 @@ def parse_args() -> argparse.Namespace:
 
     cloud = parser.add_argument_group("/IOTCONNECT (new in hyena)")
     cloud.add_argument("--no-iotc", action="store_true",
-                       help="do not connect to /IOTCONNECT (also what happens when it is unconfigured)")
+                       help="do not connect to /IOTCONNECT; without this a failure to connect is fatal")
     cloud.add_argument("--iotc-config", default="iotcDeviceConfig.json",
                        help="the device config downloaded from the device's info panel")
-    cloud.add_argument("--iotc-cert", default="",
-                       help="device certificate (default: <duid>-crt.pem beside the config)")
-    cloud.add_argument("--iotc-key", default="",
-                       help="device private key (default: <duid>-key.pem beside the config)")
+    cloud.add_argument("--iotc-cert", default="device-cert.pem",
+                       help="device certificate, as downloaded with the duid dropped")
+    cloud.add_argument("--iotc-key", default="device-pkey.pem", help="device private key, likewise")
     cloud.add_argument("--iotc-interval", type=float, default=iotc.TELEMETRY_INTERVAL_S,
                        help="seconds between telemetry messages (an event still sends at once)")
     cloud.add_argument("--iotc-verbose", action="store_true",
@@ -380,6 +381,12 @@ def main() -> None:
     print(f"Alarm      : {app.alarm_state.label}   locked: {', '.join(state.locked_objects) or '-'}")
     if scene is not None and args.preload_vlm:
         scene.load()
+
+    # Before the camera and the models, and on this thread: the cloud is required, so a failure to
+    # connect must stop the demo here - with nothing opened yet, and with the SDK's own error as
+    # the last thing printed. Run with --no-iotc to skip it on purpose.
+    if cloud is not None:
+        cloud.connect()
     print("-" * 60)
 
     camera.connect_overlay(overlay.draw)
@@ -389,7 +396,7 @@ def main() -> None:
     if voice is not None:
         voice.start()  # loads eIQ on its own thread; the video does not wait for it
     if cloud is not None:
-        cloud.start()  # connects on its own thread too; the first telemetry follows a second later
+        cloud.start()  # already connected above; this is the publisher thread
     try:
         run_loop(camera, detector, tracker, face_worker, overlay, app, service, telemetry,
                  text_commands, args.max_frames, args.log_every, stop_event)
@@ -446,31 +453,26 @@ def build_ask_agent(args, app: AntiTheftApp, overlay: Overlay) -> AskAgent | Non
 
 def build_iotc_client(args, service: CommandService, telemetry: TelemetryState, overlay: Overlay,
                       streamer: WebRtcStreamer | None) -> IotcClient | None:
-    """The /IOTCONNECT client, or None and a reason on the HUD. Never a reason not to run.
+    """The /IOTCONNECT client, or None when `--no-iotc` says so. Nothing else makes it optional.
 
-    Switched off, unconfigured, SDK not installed: all three end the same way, because a demo that
-    refuses to start over a missing certificate is worse than a demo with no dashboard. Note that
-    this takes the streamer with it: no cloud means no channel ARN, so there is nothing to stream to.
+    Deliberately unguarded: a missing config, an unreadable key or a device the back end does not
+    know all reach `connect()` and stop the demo there, with the SDK's own message. Checking for
+    those here would only produce a worse-worded version of the same error. Note that `--no-iotc`
+    takes the video stream with it: no cloud means no channel ARN, so there is nothing to stream to.
     """
-    config_path = Path(args.iotc_config)
     if args.no_iotc:
         overlay.set_cloud_status("cloud: off")
         return None
-    if not iotc.is_configured(config_path):
-        reason = ("SDK not installed" if not iotc.IS_SDK_AVAILABLE
-                  else f"no {config_path} + {iotc.CERT_FILENAME}/{iotc.KEY_FILENAME}")
-        print(f"/IOTCONNECT: disabled ({reason})")
-        overlay.set_cloud_status("cloud: unconfigured")
-        return None
+    if not iotc.IS_SDK_AVAILABLE:
+        raise SystemExit("/IOTCONNECT: the SDK is not installed. Run ./install.sh, or --no-iotc.")
     client = IotcClient(
-        config_path, service, telemetry, capture_path=Path(args.capture), app_version=VERSION,
+        Path(args.iotc_config), service, telemetry, capture_path=Path(args.capture),
+        app_version=VERSION, cert_path=Path(args.iotc_cert), key_path=Path(args.iotc_key),
         streaming=streamer,
-        cert_path=Path(args.iotc_cert) if args.iotc_cert else None,
-        key_path=Path(args.iotc_key) if args.iotc_key else None,
         on_status=overlay.set_cloud_status, on_stream_status=overlay.set_stream_status,
         interval_s=args.iotc_interval, is_verbose=args.iotc_verbose,
     )
-    print(f"/IOTCONNECT: {config_path}, certificate {client.cert_path.name}, "
+    print(f"/IOTCONNECT: {args.iotc_config}, certificate {client.cert_path.name}, "
           f"telemetry every {args.iotc_interval:.0f}s")
     return client
 

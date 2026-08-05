@@ -25,8 +25,6 @@ from time import sleep
 ROOT = Path(__file__).resolve().parent.parent  # the pilot root: applib/, and where credentials live
 sys.path.insert(0, str(ROOT))
 
-from applib.iotc import resolve_credentials  # noqa: E402
-
 from avnet.iotconnect.sdk.lite import Callbacks, Client, ClientSettings, DeviceConfig
 from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
 from avnet.iotconnect.sdk.sdklib.mqtt import C2dAck
@@ -80,23 +78,19 @@ def check_webrtc(kvs_client) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", default=str(ROOT / "iotcDeviceConfig.json"),
-                        help="the device config JSON")
-    parser.add_argument("--cert", default="", help="device certificate (default: <duid>-crt.pem)")
-    parser.add_argument("--key", default="", help="device private key (default: <duid>-key.pem)")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    # The same three defaults main.py has. Pass --config/--cert/--key if yours are named otherwise.
+    parser.add_argument("--config", default="iotcDeviceConfig.json", help="the device config JSON")
+    parser.add_argument("--cert", default="device-crt.pem", help="device certificate")
+    parser.add_argument("--key", default="device-key.pem", help="device private key")
     parser.add_argument("--listen", type=float, default=0.0, help="seconds to wait for C2D commands")
     parser.add_argument("--upload", action="store_true", help="also upload capture.jpg to S3")
-    parser.add_argument("--webrtc", action="store_true",
-                        help="also sign and open the KVS signalling channel (no camera needed)")
+    parser.add_argument("--webrtc", action="store_true", help="also sign and open the KVS signalling channel (no camera needed)")
     parser.add_argument("--capture", default=str(ROOT / "capture.jpg"), help="the file --upload sends")
     parser.add_argument("--quiet", action="store_true", help="do not print every MQTT packet")
     args = parser.parse_args()
 
-    config_path = Path(args.config)
-    cert_path, key_path = resolve_credentials(config_path, Path(args.cert) if args.cert else None,
-                                              Path(args.key) if args.key else None)
+    config_path, cert_path, key_path = Path(args.config), Path(args.cert), Path(args.key)
     print(f"SDK {SDK_VERSION}")
     for what, path in (("config", config_path), ("cert", cert_path), ("key", key_path)):
         print(f"{what:6s}: {path} {'' if path.exists() else '  <-- MISSING'}")
