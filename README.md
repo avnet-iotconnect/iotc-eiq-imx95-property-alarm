@@ -100,16 +100,8 @@ LD_LIBRARY_PATH=../imx-eiq-neutron-sdk/lib ../imx-eiq-neutron-sdk/bin/neutron-co
 ```
 
 **Both the `3.0.0` and the hex hash must match.** They differ only in the separator (`-` vs `+`). If
-they do not match the firmware prints `Microcode version mismatch!` at inference time. Note that a
-newer board image does not imply a newer Neutron: L6.18.2 ships 3.0.0, while the older L6.12 shipped
-3.1.2. To check a downloaded zip before expanding it, the same string is inside it:
-
-```bash
-unzip -p eiq-neutron-sdk-linux-3.0.0.zip target/imx95/imx95/NeutronFirmware.elf | strings | grep 'Firmware ver'
-```
-
-Do not "fix" a mismatch by copying the SDK's `target/imx95/` runtime onto the board — match the PC
-side to the board and reconvert the models.
+they do not match the firmware prints `Microcode version mismatch!` at inference time. 
+To check a downloaded zip before expanding it, the same string is inside it:
 
 ## Converting a YOLO model for Neutron (a note, not a guide)
 ```bash
@@ -126,15 +118,15 @@ to the board — nothing is staged inside the repo, so the working copy stays ex
 committed:
 
 ```bash
-TGT=root@192.168.38.203 # your board's IP
+IMX95=root@192.168.38.203 # your board's IP
 cd koala/ # or another pilot dir
-scp -r * $TGT:
-ssh $TGT 'mkdir -p koala/models'
-scp ../work/models/* $TGT:pm/models/         # host: what the converter made
-scp work/iotcDeviceConfig.json $TGT:pm/
+ssh $IMX95 'mkdir -p pm/models'
+scp -r * $IMX95:pm/
+scp ../work/models/* $IMX95:pm/models/         # host: what the converter made
+scp ../work/iotcDeviceConfig.json $TGT:pm/
 # the app will look for these two fixed names for cert and private key:
-scp work/*-crt.pem $TGT:pm/device-crt.pem 
-scp work/*-key.pem $TGT:pm/device-key.pem # 
+scp ../work/*-crt.pem $IMX95:pm/device-crt.pem 
+scp ../work/*-key.pem $IMX95:pm/device-key.pem # 
 
 
 ssh $TGT
