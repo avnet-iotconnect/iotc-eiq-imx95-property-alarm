@@ -116,9 +116,33 @@ side to the board and reconvert the models.
 bash scripts/yolo-convert-neutron.sh
 ```
 
+This writes `work/models/`. The face models come from `bash scripts/face-models-fetch.sh`.
+Neither runs on the board — the converter is host-side only.
+
+## Deploying koala (a note, not a deploy script)
+
+The whole deployment is the `koala/` directory plus the converted models. Put the models where the
+demo expects them, copy the lot over, then run the two hooks on the board:
+
 ```bash
-bash run.sh --model yolo11n_neutron.tflite --delegate
+mkdir -p koala/models && cp work/models/* koala/models/     # host: what the converter made
+scp -r koala root@192.168.38.203:                           # host: code, config and models
+
+ssh root@192.168.38.203
+cd koala && ./install.sh      # once: eIQ payload, espeak-ng, venv
+./run.sh                      # the demo
 ```
+
+The LLM behind the `ask` command is a separate install and a separate process, and the demo runs
+without it:
+
+```bash
+cd ~/koala/connector && ./install.sh && ./run.sh
+```
+
+`install.sh` does not install the board itself — the BSP image, the rt-sdk-ara2 `.deb` and the
+Ara-240 firmware above are prerequisites. In the finished project this section becomes "wget a
+tarball and unpack it".
 
 # Troubleshooting
 
