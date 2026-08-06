@@ -118,8 +118,8 @@
             "isOTACommand": false
         },
         {
-            "name": "ask",
-            "command": "ask",
+            "name": "agent",
+            "command": "agent",
             "requiredParam": true,
             "requiredAck": true,
             "isOTACommand": false

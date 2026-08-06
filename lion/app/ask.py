@@ -1,6 +1,6 @@
 """'ask': one plain-English question, answered by the 7B model on the Ara-240 - with tools.
 
-This is the only piece of koala that is *not* deterministic, and the boundary is drawn tightly on
+This is the only piece of the demo that is *not* deterministic, and the boundary is drawn tightly on
 purpose. The model does not decide when the alarm goes off (`app.py` does that, in code). What it
 does is turn a sentence a visitor typed into the dashboard - "please disarm the alarm", "register
 another user Michael", "who can you see?" - into the same commands the dashboard has buttons for.
@@ -28,7 +28,7 @@ same lock. So the model cannot do anything a dashboard command could not do, and
   person who asked.
 - *Temperature must not be 0.0.* The Ara does its own sampling on-device and cannot sample from
   degenerate parameters; the connector's shipped default of 0.0 makes every request fail with an
-  HTTP 500 that looks like a version mismatch. See `work/NXP-eiq-aaf-connector-issues.md`.
+  HTTP 500 that looks like a version mismatch. See `connector/README.md`.
 
 One question at a time (`_lock`): the Ara generates serially anyway, so a second concurrent ask
 would only queue inside the connector - and this keeps command workers free for the tools' own
