@@ -39,7 +39,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from threading import Lock
-from time import monotonic
+from time import monotonic, sleep
 from typing import TYPE_CHECKING, Callable
 
 import numpy as np
@@ -66,6 +66,14 @@ if TYPE_CHECKING:  # imported for the type only: agent.py pulls in strands-agent
 PERSON_MEMORY_S = 1.0
 USER_MEMORY_S = 2.0
 
+# Registration: how long the person is given to look at the camera, and how many goes they get.
+# The first countdown is short because it starts *after* the command was recognised, and the person
+# has been waiting through that already. A rejected look adds a second, on the grounds that
+# somebody who has just been told what to fix needs a moment to read it and do it.
+REGISTER_COUNTDOWN_S = 2.0
+REGISTER_EXTRA_S = 1.0
+REGISTER_ATTEMPTS = 3
+
 
 class AntiTheftApp:
     """Alarm state machine + the command handlers, driven entirely by on_frame / on_command."""
@@ -80,7 +88,7 @@ class AntiTheftApp:
     ) -> None:
         self.registry = registry
         self.overlay = overlay
-        self.face_worker = face_worker  # registration reads the latest face embedding from here
+        self.face_worker = face_worker  # registration takes (and judges) its look at a face here
         self.state = state              # armed flag + locked objects, persisted across restarts
         self.vocabulary = vocab         # turns what was heard into a name or a YOLO class
         self.telemetry = telemetry      # written here, read by the /IOTCONNECT publisher thread
@@ -147,6 +155,10 @@ class AntiTheftApp:
         `agent`, which is held outside it. A question sits inside the LLM for tens of seconds and its
         tools come back in through this same method, so taking the lock around it would deadlock
         the demo against itself. `agent.py` allows one question at a time for the same reason.
+
+        `register_user` is the one handler that *holds* the lock for a while - it counts the person
+        down in front of the camera first. That is the intended behaviour: while somebody is being
+        registered, the next command waits its turn rather than arriving in the middle of it.
         """
         handler = self._handlers.get(command.verb)
         if handler is None:  # only reachable from a C2D payload naming a verb we do not have
@@ -159,14 +171,60 @@ class AntiTheftApp:
     # --- handlers -----------------------------------------------------------------------------
 
     def _register_user(self, command: Command) -> str:
-        """Bind a name to the most prominent face on screen (the worker holds the live embeddings)."""
+        """Count the person down, take a good look at their face, and bind a name to it.
+
+        Registration is the one command that takes *time on purpose*. Spoken, it arrives seconds
+        after the person said it - the wake word, the recogniser, the transcript being read back -
+        and it used to bind whatever the camera happened to be seeing at that instant, which was
+        usually somebody looking at the screen to find out whether anything had happened. So the
+        screen now says when to look and for how long, and the face is only stored if the look was
+        good enough (`face.find_quality_problem`).
+
+        A rejected look restarts the countdown a second longer, with the reason where the person can
+        read it: "Please come closer to the camera - registering Nick  3". Three goes, then it gives
+        up and says why, because a fourth is not going to be the one that works.
+
+        Every attempt also leaves what it measured on the screen, and it stays there afterwards.
+        That is the only way to judge whether the face path is really telling two people apart: the
+        `nearest` figure says which *already registered* user this new face is most like, and a new
+        person scoring high against an old one is a mix-up you can watch happen. No threshold here
+        can catch that - it is the embedder failing, not the pose.
+
+        This runs on a command thread with the command lock held, so the demo takes no other command
+        for the up-to-nine seconds it can last. The video loop is untouched - it takes no lock - so
+        the picture, the alarm and the stream all carry on at 30 fps while the count runs.
+        """
         name = self._resolve_new_name(command.argument, command.is_exact)
         if name in self.registry.user_names:
             raise CommandError(f"{name} is already registered. Say unregister user {name} first.")
-        if self.face_worker.register_user(name, self._last_tracks) is None:
-            raise CommandError(f"I cannot see a face to register as {name}. Please look at the camera.")
-        print(f"[app] registered {name!r} (now knows: {', '.join(self.registry.user_names)})")
-        return f"Registered {name}."
+        self.overlay.set_face_report([])  # the last person's numbers are not about this one
+        problem = None
+        for attempt in range(REGISTER_ATTEMPTS):
+            message = (f"Registering {name} - look at the camera" if problem is None
+                       else f"{problem} - registering {name}")
+            self._count_down(message, REGISTER_COUNTDOWN_S + attempt * REGISTER_EXTRA_S)
+            result = self.face_worker.try_register_user(name, self._last_tracks)
+            verdict = f"{name}: nearest {result.nearest}  ->  {result.problem or 'registered'}"
+            print(f"[app] register {name!r} {attempt + 1}/{REGISTER_ATTEMPTS}: "
+                  f"{result.report}  ({verdict})")
+            self.overlay.set_face_report([result.report, verdict])
+            if result.is_registered:
+                print(f"[app] registered {name!r} (now knows: {', '.join(self.registry.user_names)})")
+                return f"Registered {name}."
+            problem = result.problem
+        raise CommandError(f"{problem}. I did not get a good enough look to register {name}.")
+
+    def _count_down(self, message: str, seconds: float) -> None:
+        """Put a message and a ticking number on the screen, and wait for it to run out.
+
+        The waiting is here and the drawing is in the overlay, on the display thread - so this is a
+        plain sleep, and the digit on the screen still ticks. The print is for the booth's other
+        screen: with `--no-preview` and nobody streaming, the console is the only OSD there is.
+        """
+        print(f"[app] {message} ({seconds:.0f}s)")
+        self.overlay.start_countdown(message, seconds)
+        sleep(seconds)
+        self.overlay.stop_countdown()
 
     def _unregister_user(self, command: Command) -> str:
         name = self._resolve_known_name(command.argument, command.is_exact)

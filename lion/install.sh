@@ -9,6 +9,25 @@
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"
 
+# The eIQ Neutron SDK, which you drop beside this script as a zip - NXP-licensed, so like the eIQ
+# payload below it cannot be redistributed, and unlike the payload we cannot even host it. It is
+# unpacked to a fixed, unversioned directory name so run.sh finds it without being told the version.
+# The BSP has a Neutron runtime of its own and this replaces *nothing*: run.sh points the delegate
+# and the kernel's firmware search at this copy, so removing the directory reverts to the BSP.
+# Its release must match the one that converted models/ - scripts/package-models.sh stamps that
+# into models/version.txt and the demo checks it at startup.
+# `|| true` because `set -e` would otherwise take the missing-zip case as a fatal error rather than
+# letting it reach the warning below.
+NEUTRON_SDK_ZIP=$(ls eiq-neutron-sdk-linux-*.zip 2>/dev/null | head -1 || true)
+if [ -n "$NEUTRON_SDK_ZIP" ]; then
+  rm -rf imx-eiq-neutron-sdk
+  unzip -q "$NEUTRON_SDK_ZIP" -d imx-eiq-neutron-sdk
+  echo "Neutron SDK: $NEUTRON_SDK_ZIP -> imx-eiq-neutron-sdk/"
+else
+  echo "WARNING: no eiq-neutron-sdk-linux-*.zip here. The demo will use the BSP's Neutron runtime,"
+  echo "         which on some BSPs silently produces wrong results. See README.md."
+fi
+
 # NXP's eIQ payload: 139 MB of compiled modules and encrypted weights, hosted rather than committed
 # because the licence does not allow redistributing it. Built by scripts/package-dm-eiq.sh.
 wget -O /tmp/dm-eiq-payload.tgz https://downloads.iotconnect.io/partners/nxp/packages/dm-eiq-genai-flow-lib-v1.0.0.tgz

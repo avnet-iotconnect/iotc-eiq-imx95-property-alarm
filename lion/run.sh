@@ -23,6 +23,21 @@ export LD_LIBRARY_PATH="/opt/dm-eiq/lib:${LD_LIBRARY_PATH:-}"
 export ESPEAK_DATA_PATH="/opt/dm-eiq/share"
 export PATH="/opt/dm-eiq/bin:$PATH"
 
+# The Neutron runtime, from the SDK install.sh unpacked beside us rather than the BSP's own. The
+# delegate is picked up by path (applib/neutron.py); the firmware needs the kernel's help, because
+# the driver asks for it by name -- and firmware_class.path is searched BEFORE /lib/firmware, so
+# nothing in /usr or /lib is replaced and unsetting this brings the BSP's back. It does not survive
+# a reboot, which is why it lives here rather than in install.sh. Confirm which one loaded with
+# `dmesg | grep "Booting fw"`: 46388 bytes is 3.1.3, 42332 is the BSP's.
+NEUTRON_SDK="$PWD/imx-eiq-neutron-sdk/target/imx95"
+if [ -d "$NEUTRON_SDK" ]; then
+  echo "$NEUTRON_SDK/imx95" > /sys/module/firmware_class/parameters/path
+  export LD_LIBRARY_PATH="$NEUTRON_SDK/imx95:${LD_LIBRARY_PATH:-}"
+  echo "Neutron    : imx-eiq-neutron-sdk/ beside the demo (delegate + firmware)"
+else
+  echo "Neutron    : the BSP's own runtime -- no SDK unpacked here (see install.sh)"
+fi
+
 # torch and onnxruntime will otherwise spawn a thread per core and starve the 30 fps video loop.
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 

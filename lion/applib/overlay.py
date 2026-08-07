@@ -12,6 +12,8 @@ display concerns. `app.py` decides *which* state we're in; this file decides how
 from __future__ import annotations
 
 from enum import Enum
+from math import ceil
+from time import monotonic
 
 import cairo
 
@@ -46,6 +48,9 @@ class Overlay:
         self.agent_status = "agent: off"
         self.inference_ms = 0.0
         self.end_to_end_ms = 0.0
+        self.countdown_message = ""
+        self.countdown_until = 0.0
+        self.face_report: list[str] = []
 
     def set_tracks(self, tracks: list[Track]) -> None:
         self.tracks = tracks  # atomic reference swap; the draw callback reads the latest
@@ -77,12 +82,38 @@ class Overlay:
         self.inference_ms = inference_ms
         self.end_to_end_ms = end_to_end_ms
 
+    def start_countdown(self, message: str, seconds: float) -> None:
+        """Ask the person for something, and show how long they have to do it. Registration uses it.
+
+        A deadline rather than a number, so the caller sets this once and the digit still ticks down
+        on every drawn frame. That matters because the caller is a command handler on another
+        thread, sleeping through exactly this interval - the one place in the demo where the person
+        is being asked to hold a pose, and where the screen is the only thing that can tell them for
+        how long.
+        """
+        self.countdown_message = message
+        self.countdown_until = monotonic() + seconds
+
+    def stop_countdown(self) -> None:
+        self.countdown_until = 0.0
+
+    def set_face_report(self, lines: list[str]) -> None:
+        """What the last registration attempt measured, kept on screen until the next one.
+
+        On the screen and not only in the log because the person being registered is standing at
+        the camera, not at the console - and judging whether the face path is telling two people
+        apart means reading the numbers *while* changing what the camera sees. It stays up
+        afterwards so it can be read from across the room.
+        """
+        self.face_report = lines
+
     def draw(self, context: cairo.Context) -> None:
         """The cairooverlay `draw` callback: paint boxes, the HUD, and the alarm banner if armed-tripped."""
         self._draw_boxes(context)
         self._draw_hud(context)
         if self.alarm_state is AlarmState.ALARM:
             self._draw_alarm_banner(context)
+        self._draw_countdown(context)
 
     def _draw_boxes(self, context: cairo.Context) -> None:
         context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
@@ -138,6 +169,26 @@ class Overlay:
         context.set_font_size(18)
         for index, (text, color) in enumerate(self.get_hud_lines()):
             _draw_text(context, text, 10, 24 + index * 22, color)
+
+    def _draw_countdown(self, context: cairo.Context) -> None:
+        """'Registering Nick - look at the camera  2', centered along the bottom while it runs.
+
+        Bottom, not middle: the person is looking at the camera above the screen, so this sits where
+        it does not cover the face they are checking, nor the ALARM banner. The last attempt's
+        measurements sit just above it, in small type, and outlive the count.
+        """
+        context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        context.set_font_size(15)
+        for index, line in enumerate(self.face_report):
+            _draw_text(context, line, 10, self.frame_height - 70 + index * 19, (0.15, 0.90, 0.90))
+        remaining = self.countdown_until - monotonic()
+        if remaining <= 0:
+            return
+        context.set_font_size(28)
+        text = f"{self.countdown_message}  {ceil(remaining)}"
+        extents = context.text_extents(text)
+        x = (self.frame_width - extents.width) / 2 - extents.x_bearing
+        _draw_text(context, text, x, self.frame_height - 24, (1.0, 1.0, 1.0))
 
     def _draw_alarm_banner(self, context: cairo.Context) -> None:
         """Big centered red 'ALARM' - fires when armed and a person is present but no user recognized."""

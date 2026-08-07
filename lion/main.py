@@ -76,7 +76,7 @@ sys.path.insert(0, str(PAYLOAD / "src"))
 from app import agent  # noqa: E402
 from app.agent import AgentService  # noqa: E402
 from app.app import AntiTheftApp  # noqa: E402
-from applib import audio_devices, camera_devices, iotc, vocabulary, webrtc  # noqa: E402
+from applib import audio_devices, camera_devices, iotc, neutron, vocabulary, webrtc  # noqa: E402
 from applib.camera import Camera  # noqa: E402
 from applib.commands import CommandService  # noqa: E402
 from applib.detector import Detector  # noqa: E402
@@ -320,10 +320,16 @@ def main() -> None:
 
     detector = Detector(args.model, use_neutron, num_threads, args.conf, args.iou)
     print(detector.describe())
+    # The face embedder gets the same rule as the detector: the backend follows the *model name*,
+    # not the other backend. Naming a CPU embedder with --sface-model used to load it behind the
+    # Neutron delegate anyway and then report it as running on the NPU - which delegates nothing
+    # (0 of 172 nodes) and so was merely a lie on the startup line, but it is the line somebody
+    # reads while working out whether the face path can be trusted.
     sface_model = args.sface_model or str(
         MODELS / ("sface_neutron.tflite" if use_neutron else "sface_int8.tflite"))
-    print(f"Face embed : {sface_model} ({'Neutron NPU' if use_neutron else 'CPU'})")
-    face = FaceRecognizer(args.yunet, args.sface, sface_model, use_neutron=use_neutron)
+    use_neutron_face = "neutron" in Path(sface_model).name
+    print(f"Face embed : {sface_model} ({'Neutron NPU' if use_neutron_face else 'CPU'})")
+    face = FaceRecognizer(args.yunet, args.sface, sface_model, use_neutron=use_neutron_face)
     registry = Registry(args.db)
     face_worker = FaceWorker(face, registry, args.face_interval)
     tracker = Tracker()
@@ -391,6 +397,13 @@ def main() -> None:
 
     print(f"Known users: {', '.join(registry.user_names) or '(none)'}")
     print(f"Alarm      : {app.alarm_state.label}   locked: {', '.join(state.locked_objects) or '-'}")
+    # Late, and loud when it fires: converter, delegate and firmware must be one release, and when
+    # they are not the models still load and still run - they just return nonsense. See neutron.py.
+    mismatch = neutron.check_models(MODELS)
+    if mismatch is not None:
+        print("=" * 78)
+        print(f"WARNING: {mismatch}")
+        print("=" * 78)
     if scene is not None and args.preload_vlm:
         scene.load()
 

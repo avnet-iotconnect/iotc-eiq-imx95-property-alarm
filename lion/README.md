@@ -48,7 +48,7 @@ Say **"Hey NXP"**, wait for the blip, then you have **3 seconds to start talking
 
 | command | what happens | error you will hear |
 |---|---|---|
-| `register user Michael` | binds Michael to the largest face on screen | already registered / no face visible |
+| `register user Michael` | counts you down, then binds Michael to the closest face | already registered / no good look at a face |
 | `unregister user Michael` | forgets him, and the label disappears at once | I do not know anyone called Michael |
 | `unregister last user` | undo for a registration that bound the wrong face | there are no registered users |
 | `arm` / `arm the alarm` | arms the alarm | (never fails) |
@@ -65,6 +65,70 @@ minutes. `--no-repeat` turns that off once the booth is running.
 `lock` / `unlock` are deliberately stubs: they prove an object can be *named and found* on screen,
 which is the hard part of the voice slice. The 2s/5s theft timing that makes a locked object
 actually trip the alarm is the next pilot.
+
+## Registering a face
+
+`register user Michael` does not grab a face the instant it is understood. The screen counts you
+down instead:
+
+```
+                    Registering Michael - look at the camera  2
+```
+
+Two seconds, along the bottom of the picture. It is there because a spoken command arrives *late* —
+the wake word, the recogniser, the transcript being read back to you — and what the camera used to
+get was somebody looking at the screen to see whether anything had happened, not at the lens.
+
+When the count runs out the face is measured before it is stored, and a poor look is not stored at
+all. The countdown starts again, a second longer, with the reason in the same place:
+
+```
+                    Please come closer to the camera - registering Michael  3
+```
+
+Three goes, then it gives up and says why. The five things it measures, and what it wants
+(`applib/face.py`):
+
+| measure | wanted | what a failure means |
+|---|---|---|
+| face size | ≥ 60 px | too far from the camera to have any detail to embed |
+| straightness | ≥ 0.50 | the head is turned — the nose has slid towards one eye |
+| YuNet confidence | ≥ 0.90 | something is in the way, or only part of the face is in shot |
+| sharpness | ≥ 60 | motion blur, or a face that was upscaled from too far away |
+| consistency | ≥ 0.75 | the two looks 200 ms apart disagree: still moving, or a different person |
+
+**Why bother.** The vector stored here is what every later match is measured against, and a bad one
+does not simply fail — it drifts. Embedding one face twice, once held still and once smeared by
+movement, gives two vectors 0.55 alike, while a *stranger* sits at 0.06 from the still one and 0.14
+from the smeared one. The gap identity is decided on falls from 0.94 to 0.41, and the match
+threshold is 0.363. That is the mechanism behind "it keeps calling me by her name".
+
+Matching is deliberately **not** gated the same way: it gets a fresh look five times a second and
+can afford a bad one. Only registration is once-and-for-all.
+
+The thresholds above are starting points, measured off photographs scaled to the size this camera
+sees. Every attempt leaves what it measured **on the screen**, where you can read it without
+leaving the camera, and it stays up until the next registration:
+
+```
+size 96px  straight 0.81  score 0.96  sharpness 210  steady 0.94
+Michael: nearest Marija 0.12  ->  registered
+```
+
+The same line goes to the console. Tuning the five thresholds is a matter of registering somebody a
+few times and reading those numbers.
+
+`nearest` is the odd one out: it is not a quality measure, it is **which already-registered user
+this new face is most like**. A new person scoring high there is the demo failing to tell two people
+apart, which no threshold above can fix — and on this board today it is 1.00, because the Neutron
+build of SFace is broken:
+
+> ⚠️ **Run the face embedder on the CPU:** `./run.sh --sface-model models/sface_int8.tflite`.
+> `models/sface_neutron.tflite` currently returns the same vector whatever face it is given —
+> three different people embed to a cosine of 1.000 of each other, so everybody matches everybody.
+> The CPU model is correct (0.991 against the reference, different people at 0.05–0.08) and costs
+> ~58 ms on a background thread at 5 Hz, not on the frame loop. YOLO on Neutron is unaffected.
+> The fix is re-converting SFace with a `neutron-converter` build matched to the board's BSP.
 
 ## The pieces
 
@@ -370,6 +434,45 @@ eIQ kills the process after **60 minutes** — the timeout is inside NXP's compi
 along with the models, so at a trade show the demo *will* restart between visitors. Anything set by
 voice therefore goes to disk: registered faces in `faces.json`, the armed flag and locked objects in
 `state.json`. Startup is about 15 seconds. koala can also do the restarting itself: see above.
+
+# The Neutron SDK, and why the demo brings its own
+
+**Drop `eiq-neutron-sdk-linux-<version>.zip` beside `install.sh` before installing.** It is
+NXP-licensed, so it cannot be committed or hosted with the demo — download it from nxp.com and put
+it here. `install.sh` unpacks it to `imx-eiq-neutron-sdk/`.
+
+The BSP already ships a Neutron delegate in `/usr/lib` and its firmware in `/lib/firmware`, and this
+demo deliberately uses neither. On the image this was written against, the SDK release those came
+from **miscompiled the face embedder**: SFace returned a vector that barely depended on its input, so
+three different people embedded to a cosine of 1.000 of each other and every face matched every
+registered user. The same release also converted YOLO into nine Neutron graphs instead of two —
+12.9 ms of inference where a good build does 5.9 ms.
+
+Nothing is replaced to fix that, so falling back costs nothing:
+
+| piece | how it is redirected |
+|---|---|
+| delegate | loaded by path — `applib/neutron.py` picks the SDK's copy when it exists, else `/usr/lib` |
+| firmware | `run.sh` writes the SDK's directory into `/sys/module/firmware_class/parameters/path`, which the kernel searches **before** `/lib/firmware` |
+| models | converted by the matching `neutron-converter`, by `scripts/package-models.sh` |
+
+Delete `imx-eiq-neutron-sdk/` and you are back on the BSP's runtime, unmodified.
+
+**Three pieces, one release.** Converter, delegate and firmware must all come from the same SDK. A
+mismatch does not raise — it returns wrong numbers. (A delegate from one release on another's
+firmware detected *nothing at all*, silently.) So `package-models.sh` stamps the SDK it used, and its
+firmware's md5, into `models/version.txt`, and the demo checks that at startup:
+
+```
+==============================================================================
+WARNING: The models were converted by eiq-neutron-sdk-linux-3.1.3, but the Neutron firmware
+about to run them is the BSP's own /lib/firmware, which is a different build. Expect wrong
+results rather than errors - faces that all match, or nothing detected at all.
+==============================================================================
+```
+
+To check by hand which firmware is live: `dmesg | grep "Booting fw"` — the size identifies the
+build. Note the setting does not survive a reboot, which is why `run.sh` applies it every launch.
 
 # Running
 

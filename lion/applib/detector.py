@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from tflite_runtime.interpreter import Interpreter, load_delegate
 
+from applib import neutron
 from applib.yolo import (
     COCO_CLASSES,
     decode_detections,
@@ -21,8 +22,6 @@ from applib.yolo import (
     map_boxes_to_frame,
     quantize_input,
 )
-
-NEUTRON_DELEGATE_PATH = "/usr/lib/libneutron_delegate.so"
 
 Detection = tuple[str, float, list[int]]  # (class_name, score, box_xyxy) - what the tracker consumes
 
@@ -33,7 +32,7 @@ class Detector:
     def __init__(
         self, model_path: str, use_neutron: bool, num_threads: int, conf: float = 0.25, iou: float = 0.45
     ) -> None:
-        delegates = [load_delegate(NEUTRON_DELEGATE_PATH)] if use_neutron else []
+        delegates = [load_delegate(neutron.DELEGATE_PATH)] if use_neutron else []
         self.interpreter = Interpreter(
             model_path=model_path, experimental_delegates=delegates, num_threads=num_threads
         )

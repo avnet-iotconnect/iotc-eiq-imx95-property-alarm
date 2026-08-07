@@ -60,6 +60,15 @@ class Registry:
         self._save()
         return name
 
+    def compare(self, a: np.ndarray, b: np.ndarray) -> float:
+        """How alike two face vectors are, on the same 0..1 cosine scale as `match_threshold`.
+
+        Registration asks this about two looks at the *same* face 200 ms apart, to find out whether
+        the person was holding still. It lives here because comparing embeddings is this file's
+        business - `face.py` produces vectors and deliberately knows nothing about matching them.
+        """
+        return _cosine_similarity(a, b)
+
     def resolve_identities(
         self, embeddings: dict[int, np.ndarray], current_track_ids: list[int], previous: dict[int, Identity]
     ) -> dict[int, Identity]:
@@ -110,11 +119,23 @@ class Registry:
             used_names.add(name)
         return assigned
 
+    def find_nearest_user(self, embedding: np.ndarray) -> tuple[str | None, float | None]:
+        """Which registered user this face is most like, and how much. (None, None) if none exist.
+
+        Registration puts this on the screen, and it is the one diagnostic no threshold can
+        replace: a face being registered as somebody *new* that already scores high against
+        somebody *old* is the mix-up happening while you watch. It says nothing about quality -
+        it says the embedder cannot tell these two people apart.
+        """
+        if not self._embeddings:
+            return None, None
+        name = max(self._embeddings,
+                   key=lambda user: _cosine_similarity(embedding, self._embeddings[user]))
+        return name, _cosine_similarity(embedding, self._embeddings[name])
+
     def _best_score(self, embedding: np.ndarray) -> float | None:
         """Highest cosine to any registered user (debug '?' label); None when nobody is registered."""
-        if not self._embeddings:
-            return None
-        return max(_cosine_similarity(embedding, stored) for stored in self._embeddings.values())
+        return self.find_nearest_user(embedding)[1]
 
     def is_person_present(self, tracks: list[Track]) -> bool:
         return any(track.class_name == "person" for track in tracks)

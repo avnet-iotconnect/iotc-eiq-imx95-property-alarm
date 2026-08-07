@@ -24,4 +24,4 @@
 # When making the eiq demo tarball:
 dm-eiq-genai-flow-demonstrator/
 *.tgz
-
+*.zip
