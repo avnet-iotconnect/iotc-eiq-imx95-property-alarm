@@ -72,46 +72,17 @@ ps -eaf | grep proxy_ara240
 
 ## eIQ Neutron SDK (model converter)
 
-On your PC download the eIQ Neutron SDK **version 3.0.0** from the
+On your PC download the eIQ Neutron SDK **version 3.1.3** from the
 
 [eIQ® Toolkit for End-to-End Model Development and Deployment](https://www.nxp.com/design/design-center/software/eiq-ai-development-environment/eiq-toolkit-for-end-to-end-model-development-and-deployment:EIQ-TOOLKIT#downloads)
-web page. 
+web page.
 
-Version 3.0.0 matches what is on the `L6.18.2-1.0.0_MX95` image.
+Download the zip into the root of this repo. 
 
-Expand it into a directory parallel to this repo `../imx-eiq-neutron-sdk`
+Version 3.1.3 does not match what is on the `L6.18.2-1.0.0_MX95` image and will need to be deployed on the board before running the installer:
 
-### Which SDK version? Ask the board.
 
-The converter bakes a microcode blob into the `.tflite`, and the Neutron firmware on the board refuses
-a blob it did not expect. So the SDK version is not a choice — it is dictated by whichever image you
-flashed. Get it from the board:
-
-```bash
-strings /usr/lib/firmware/NeutronFirmware.elf | grep 'Firmware ver'
-# Neutron Firmware ver:3.0.0-0X6d41ac8b started
-```
-
-and from the SDK on your PC:
-
-```bash
-LD_LIBRARY_PATH=../imx-eiq-neutron-sdk/lib ../imx-eiq-neutron-sdk/bin/neutron-converter --version
-# eIQ neutron-converter version 3.0.0+0X6d41ac8b
-```
-
-**Both the `3.0.0` and the hex hash must match.** They differ only in the separator (`-` vs `+`). If
-they do not match the firmware prints `Microcode version mismatch!` at inference time. 
-To check a downloaded zip before expanding it, the same string is inside it:
-
-## Converting a YOLO model for Neutron (a note, not a guide)
-```bash
-bash scripts/yolo-convert-neutron.sh
-```
-
-This writes `work/models/`. The face models come from `bash scripts/face-models-fetch.sh`.
-Neither runs on the board — the converter is host-side only.
-
-## Deploying koala (a note, not a deploy script)
+## Deploying a pilot (a note, not a deploy script)
 
 The whole deployment is the `koala/` directory plus the converted models. Both are copied straight
 to the board — nothing is staged inside the repo, so the working copy stays exactly what is
@@ -119,18 +90,20 @@ committed:
 
 ```bash
 IMX95=root@192.168.38.203 # your board's IP
-cd koala/ # or another pilot dir
-ssh $IMX95 'mkdir -p pa/models'
-scp -r * $IMX95:pa/
-scp ../work/models/* $IMX95:pa/models/         # host: what the converter made
+cd lion/ # or another pilot dir
 scp ../work/iotcDeviceConfig.json $TGT:pa/
 # the app will look for these two fixed names for cert and private key:
-scp ../work/*-crt.pem $IMX95:pa/device-cert.pem 
-scp ../work/*-key.pem $IMX95:pa/device-pkey.pem # 
+scp ../work/*-crt.pem $IMX95:pa/device-cert.pem
+scp ../work/*-key.pem $IMX95:pa/device-pkey.pem
+scp eiq-neutron-sdk-linux-3.1.3.zip $IMX95:pa/  # We need to install the matching neutron SDK on the board
+```
+SSH to the device (ssh $IMX95) and run the following commands:
 
-
-ssh $TGT
-cd pa
+```bash
+mkdir -p pa && cd pa
+# download the source package:
+wget -O iotc-property-alarm-src.tgz https://downloads.iotconnect.io/partners/nxp/packages/iotc-property-alarm-src-v1.1.0.tgz
+tar zxf iotc-property-alarm-src.tgz
 ./install.sh      # once: eIQ payload, espeak-ng, venv
 ./run.sh          # run the demo
 ```

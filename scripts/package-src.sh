@@ -10,15 +10,16 @@
 # the connector's downloaded source, the models (their own tarball), and anything holding a
 # device's identity or a visitor's face.
 set -euo pipefail
-cd "$(dirname "$(readlink -f "$0")")/.."
 
-tar czf iotc-property-alarm-src.tgz -C koala \
-    --exclude=venv --exclude=nxp-lib --exclude=models --exclude=__pycache__ \
-    --exclude=connector/venv --exclude=connector/source --exclude=connector/source.tar.gz \
-    --exclude=connector/server.log \
-    --exclude=faces.json --exclude=state.json --exclude=capture.jpg --exclude=scene.jpg \
-    --exclude=command.txt --exclude=iotcDeviceConfig.json --exclude='*.pem' \
-    .
+if [ ! -f main.py ]; then
+    echo "Run this script from the the source root!"
+    exit 1
+fi
 
-tar tzf iotc-property-alarm-src.tgz | sort
-ls -la iotc-property-alarm-src.tgz
+tar czf ../iotc-property-alarm-src.tgz \
+  --exclude=venv --exclude=nxp-lib --exclude=models --exclude=agenttools  --exclude=__pycache__ \
+  --exclude=iotcDeviceConfig.json --exclude='*.pem' \
+  .
+
+tar tzf ../iotc-property-alarm-src.tgz | sort
+ls -la ../iotc-property-alarm-src.tgz

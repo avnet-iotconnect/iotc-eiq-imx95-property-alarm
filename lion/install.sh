@@ -54,7 +54,7 @@ popd >/dev/null
 
 print_warning="no"
 if [ ! -d models/ ]; then
-  wget -O /tmp/iotc-property-alarm-models.tgz https://downloads.iotconnect.io/partners/nxp/packages/iotc-property-alarm-models-v1.0.0.tgz
+  wget -O /tmp/iotc-property-alarm-models.tgz https://downloads.iotconnect.io/partners/nxp/packages/iotc-property-alarm-models-v1.1.0.tgz
   tar xzf /tmp/iotc-property-alarm-models.tgz
   rm -f /tmp/iotc-property-alarm-models.tgz
 else
