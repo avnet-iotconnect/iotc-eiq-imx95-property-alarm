@@ -9,7 +9,7 @@ depend on the cloud.
 So producers only ever write here, and the publisher reads here. Two kinds of value:
 
     set(...)       sticky: the latest reading, resent on every 4-second tick (fps, alarm, objects)
-    set_once(...)  one-shot: sent with the next message and then forgotten (scene)
+    set_once(...)  one-shot: sent with the next message and then forgotten (scene, answer)
 
 and one nudge:
 
@@ -47,8 +47,9 @@ class TelemetryState:
     def set_once(self, **values: TelemetryValue) -> None:
         """Record values to send with the next message and then forget, and ask for it now.
 
-        `scene` is the case: a scene description is an answer to a question somebody asked, not a
-        reading. Repeating it every four seconds for the rest of the day would be noise.
+        `scene` and `answer` are the cases: a description or a reply is an answer to a question
+        somebody asked, not a reading. Repeating it every four seconds for the rest of the day would
+        be noise - and see `collect` for why the other ticks omit the attribute rather than nulling it.
         """
         with self._lock:
             self._once.update(values)
@@ -70,9 +71,16 @@ class TelemetryState:
             return self._values.get(name)
 
     def collect(self) -> dict[str, TelemetryValue]:
-        """Everything to publish now: the sticky values plus the one-shots, which are consumed."""
+        """Everything to publish now: the sticky values plus the one-shots, which are consumed.
+
+        An attribute whose value is `None` is **left out of the packet entirely** rather than sent
+        as `null`. The back end does not treat those two the same: a missing field means "no reading
+        this time" and the last one stands, while a null is a reading of nothing. `answer` is the
+        case that matters - the LLM's reply belongs to the one message that follows the question,
+        and every other message should look as though nobody asked.
+        """
         with self._lock:
             values = dict(self._values)
             values.update(self._once)
             self._once.clear()
-        return values
+        return {name: value for name, value in values.items() if value is not None}

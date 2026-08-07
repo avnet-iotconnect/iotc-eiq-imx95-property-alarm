@@ -3,8 +3,9 @@
 display streamed over WebRTC, and an LLM on the Ara-240 that answers plain English.
 
 Everything a visitor could ask for is a command - spoken, or pressed on the dashboard - except
-`ask`, a sentence answered by Qwen2.5-7B on the Ara-240 DNPU whose tools are the demo's own command
-handlers. "Please disarm the alarm" and "who can you see?" both work, and neither is parsed by us.
+`agent`, a sentence answered by Qwen2.5-7B on the Ara-240 DNPU whose tools are the demo's own
+command handlers. "Please disarm the alarm" and "who can you see?" both work, and neither is
+parsed by us.
 
 Nothing here needs to be told where the hardware is. The camera device in particular is found at
 startup rather than written down: `/dev/videoN` moves with the BSP and with whatever else is
@@ -12,7 +13,7 @@ plugged in. See `applib/camera_devices.py`.
 
     ./run.sh                                   # NPU for YOLO and SFace, voice on, cloud on, streaming
     ./run.sh --device /dev/video52             # name the camera yourself; otherwise it is found
-    ./run.sh --no-ask                          # everything except the LLM
+    ./run.sh --no-agent                        # everything except the LLM
     ./run.sh --no-webrtc                       # everything except the live video
     ./run.sh --no-iotc                         # no cloud at all - the only way to run without it
     ./run.sh --no-voice                        # just the video loop, no eIQ payload needed
@@ -43,8 +44,8 @@ Threads, and the whole design is about keeping them apart:
     iotc       one thread publishing telemetry, plus paho's own MQTT thread     (iotc.py)
     webrtc     one thread running asyncio: signalling and every viewer          (webrtc.py)
 
-The LLM gets no thread of its own: an `ask` occupies one command worker for the ~30 s it takes,
-and the model itself is in another process entirely, reached over HTTP (see `app/ask.py`).
+The LLM gets no thread of its own: an `agent` question occupies one command worker for the ~30 s it
+takes, and the model itself is in another process entirely, reached over HTTP (see `app/agent.py`).
 
 The video for the stream never passes through any of them: GStreamer's own threads compose the
 overlay, hand the frame to the i.MX95's hardware H.264 encoder and deliver finished packets. See
@@ -54,7 +55,7 @@ overlay, hand the frame to the i.MX95's hardware H.264 encoder and deliver finis
 so a bad certificate or an unreachable back end stops the demo there rather than being a line on a
 HUD nobody reads. `--no-iotc` is the way to run without it. Voice and WebRTC do load and connect on
 their own threads, so the picture is live a second after that. Watch the HUD's `voice:`, `cloud:`,
-`stream:` and `ask:` lines for when each is ready.
+`stream:` and `agent:` lines for when each is ready.
 """
 
 from __future__ import annotations
@@ -72,9 +73,9 @@ from time import perf_counter, sleep
 PAYLOAD = Path(__file__).resolve().parent / "nxp-lib"
 sys.path.insert(0, str(PAYLOAD / "src"))
 
-from app import ask  # noqa: E402
+from app import agent  # noqa: E402
+from app.agent import AgentService  # noqa: E402
 from app.app import AntiTheftApp  # noqa: E402
-from app.ask import AskAgent  # noqa: E402
 from applib import audio_devices, camera_devices, iotc, vocabulary, webrtc  # noqa: E402
 from applib.camera import Camera  # noqa: E402
 from applib.commands import CommandService  # noqa: E402
@@ -93,9 +94,9 @@ from applib.webrtc import WebRtcStreamer  # noqa: E402
 
 MODELS = Path(__file__).resolve().parent / "models"  # converted on the host, copied over with us
 VLM_WEIGHTS = MODELS / "vlm"                          # SmolVLM, pulled from Hugging Face by --prefetch
-VERSION = "property-alarm-1.0"   # reported as the 'version' telemetry attribute
-FPS_REPORT_FRAMES = 15       # how often the frame loop refreshes the fps it tells the cloud
-RESTART_DELAY_S = 3.0        # a restart waits this long, so its C2D ack reaches the cloud first
+VERSION = "1.0.0"       # reported as the 'version' telemetry attribute
+FPS_REPORT_FRAMES = 15  # how often the frame loop refreshes the fps it tells the cloud
+RESTART_DELAY_S = 3.0   # a restart waits this long, so its C2D ack reaches the cloud first
 
 
 class TextCommandFile:
@@ -270,13 +271,13 @@ def parse_args() -> argparse.Namespace:
                         help="do not stream the display (the rest of /IOTCONNECT is unaffected)")
 
     llm = parser.add_argument_group("the LLM on the Ara-240")
-    llm.add_argument("--no-ask", action="store_true",
-                     help="do not use the LLM; the 'ask' command then refuses politely")
-    llm.add_argument("--ara-url", default=ask.ARA_URL,
+    llm.add_argument("--no-agent", action="store_true",
+                     help="do not use the LLM; the 'agent' command then refuses politely")
+    llm.add_argument("--ara-url", default=agent.ARA_URL,
                      help="the eIQ AAF Connector's OpenAI endpoint (see connector/README.md)")
-    llm.add_argument("--ara-model", default=ask.ARA_MODEL,
+    llm.add_argument("--ara-model", default=agent.ARA_MODEL,
                      help="which model the connector should answer with")
-    llm.add_argument("--ask-tokens", type=int, default=ask.MAX_TOKENS,
+    llm.add_argument("--agent-tokens", type=int, default=agent.MAX_TOKENS,
                      help="longest answer, in tokens (~5 tokens/second, so this is also a time limit)")
     return parser.parse_args()
 
@@ -358,9 +359,10 @@ def main() -> None:
     app = AntiTheftApp(registry, overlay, face_worker, state, vocab, telemetry, scene,
                        Path(args.capture), on_restart=request_restart,
                        get_display_frame=camera.read_display)
-    # The one back-edge in the object graph, and the reason it exists is worth a line: the LLM's
-    # tools *are* the command handlers, so the agent cannot be built before the app that owns them.
-    app.set_ask_agent(build_ask_agent(args, app, overlay))
+    # The first of two back-edges in the object graph, and the reason it exists is worth a line: the
+    # LLM's tools *are* the command handlers, so the agent cannot be built before the app that owns
+    # them. (The second is `set_upload_capture` below, for the same kind of reason.)
+    app.set_agent(build_agent(args, app, overlay))
     service = CommandService(app.on_command, max_workers=args.command_threads)
     text_commands = TextCommandFile(args.text_commands) if args.text_commands else None
     if args.restart_after > 0:
@@ -381,6 +383,11 @@ def main() -> None:
         overlay.set_voice_status("voice: off")
 
     cloud = build_iotc_client(args, service, telemetry, overlay, streamer)
+    if cloud is not None:
+        # The other back-edge: a snapshot is saved by the app and uploaded by the cloud, and the
+        # cloud cannot exist until the command service does. Handing over one bound method keeps
+        # `app.py` free of S3 and keeps "take a screenshot" one command rather than two.
+        app.set_upload_capture(cloud.upload_capture)
 
     print(f"Known users: {', '.join(registry.user_names) or '(none)'}")
     print(f"Alarm      : {app.alarm_state.label}   locked: {', '.join(state.locked_objects) or '-'}")
@@ -435,25 +442,25 @@ def build_streamer(args, overlay: Overlay, camera: Camera) -> WebRtcStreamer:
                           on_status=overlay.set_stream_status)
 
 
-def build_ask_agent(args, app: AntiTheftApp, overlay: Overlay) -> AskAgent | None:
+def build_agent(args, app: AntiTheftApp, overlay: Overlay) -> AgentService | None:
     """The LLM on the Ara-240, or None and a reason on the HUD. Never a reason not to run.
 
     Nothing is checked or connected here: the connector is a separate process with its own venv and
     its own ~4-minute model load, and a demo that waited for it (or refused to start without it)
-    would be a worse demo. The first `ask` is what finds out, and it says so if the endpoint is not
-    there. `connector/README.md` is how to bring it up.
+    would be a worse demo. The first question is what finds out, and it says so if the endpoint is
+    not there. `connector/README.md` is how to bring it up.
     """
-    if args.no_ask:
-        overlay.set_ask_status("ask: off")
+    if args.no_agent:
+        overlay.set_agent_status("agent: off")
         return None
-    if not ask.IS_STRANDS_AVAILABLE:
+    if not agent.IS_STRANDS_AVAILABLE:
         print("Ara LLM   : disabled (strands-agents is not installed)")
-        overlay.set_ask_status("ask: unavailable")
+        overlay.set_agent_status("agent: unavailable")
         return None
     print(f"Ara LLM   : {args.ara_model} at {args.ara_url}")
-    return AskAgent(app.on_command, app.get_status, base_url=args.ara_url,
-                    model_id=args.ara_model, max_tokens=args.ask_tokens,
-                    on_status=overlay.set_ask_status)
+    return AgentService(app.on_command, app.get_status, base_url=args.ara_url,
+                        model_id=args.ara_model, max_tokens=args.agent_tokens,
+                        on_status=overlay.set_agent_status)
 
 
 def build_iotc_client(args, service: CommandService, telemetry: TelemetryState, overlay: Overlay,

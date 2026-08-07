@@ -4,7 +4,7 @@
 # NXP's own install.sh is not used: it installs packages system-wide, edits ~/.bashrc, and builds
 # alsa-lib into /usr/local, leaving a second libasound.so.2 for audio programs to bind to. This
 # writes to nxp-lib/, /opt/dm-eiq and venv/ only, so removing those three returns the image to
-# stock. The vision models are converted on the host and copied over; the LLM behind 'ask' has its
+# stock. The vision models are converted on the host and copied over; the LLM behind 'agent' has its
 # own installer in connector/.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")"

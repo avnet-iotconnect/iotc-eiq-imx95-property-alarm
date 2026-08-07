@@ -1,4 +1,4 @@
-"""'ask': one plain-English question, answered by the 7B model on the Ara-240 - with tools.
+"""'agent': one plain-English question, answered by the 7B model on the Ara-240 - with tools.
 
 This is the only piece of the demo that is *not* deterministic, and the boundary is drawn tightly on
 purpose. The model does not decide when the alarm goes off (`app.py` does that, in code). What it
@@ -20,9 +20,10 @@ same lock. So the model cannot do anything a dashboard command could not do, and
 **Three limits worth knowing before changing anything here:**
 
 - *4096 tokens, prompt plus generation*, compiled into the model - and every tool schema is part of
-  every prompt. Eight tools cost roughly 500 of them. That is also why each question gets a **fresh
-  `Agent`**: strands keeps conversation history, and a booth that runs all day would overflow the
-  window by mid-morning. Each ask is a clean slate.
+  every prompt. Nine tools cost roughly 600 of them, which is why the descriptions below are one
+  line each and why what a tool *returns* is kept short too. That budget is also why each question
+  gets a **fresh `Agent`**: strands keeps conversation history, and a booth that runs all day would
+  overflow the window by mid-morning. Each question is a clean slate.
 - *~5 tokens/second.* A tool call plus an answer is 20-40 seconds. It runs on a command thread, off
   the video loop, and the /IOTCONNECT ack is sent when it finishes - so nothing waits on it but the
   person who asked.
@@ -30,7 +31,7 @@ same lock. So the model cannot do anything a dashboard command could not do, and
   degenerate parameters; the connector's shipped default of 0.0 makes every request fail with an
   HTTP 500 that looks like a version mismatch. See `connector/README.md`.
 
-One question at a time (`_lock`): the Ara generates serially anyway, so a second concurrent ask
+One question at a time (`_lock`): the Ara generates serially anyway, so a second concurrent question
 would only queue inside the connector - and this keeps command workers free for the tools' own
 commands.
 """
@@ -52,7 +53,7 @@ try:
     from strands import Agent, tool
     from strands.models.openai import OpenAIModel
     IS_STRANDS_AVAILABLE = True
-except ImportError:  # the rest of the demo runs fine without it; the HUD says "ask: unavailable"
+except ImportError:  # the rest of the demo runs fine without it; the HUD says "agent: unavailable"
     IS_STRANDS_AVAILABLE = False
 
 ARA_URL = "http://127.0.0.1:3000/v1"   # the connector, on the board, beside us
@@ -68,7 +69,7 @@ SYSTEM_PROMPT = (
 )
 
 
-class AskAgent:
+class AgentService:
     """A question in, a sentence out. Tools call straight back into the command handlers."""
 
     def __init__(
@@ -88,12 +89,12 @@ class AskAgent:
         )
         self._tools = self._build_tools()
         self._lock = Lock()
-        self.on_status("ask: ready")
+        self.on_status("agent: ready")
 
     def ask(self, question: str) -> str:
         """Answer one question, running whatever tools the model decides it needs. Blocks for ~30 s."""
         with self._lock:
-            self.on_status("ask: thinking")
+            self.on_status("agent: thinking")
             started = perf_counter()
             try:
                 # A new Agent per question: no history, so the 4096-token window is never eaten by
@@ -109,14 +110,14 @@ class AskAgent:
                 # here - "start it" - and strands' stack for it is forty frames of asyncio, httpx
                 # and openai internals, none of which say anything the message below does not.
                 # `--iotc-verbose`-style detail is a `logging.DEBUG` away when it is really wanted.
-                logger.debug("ask failed", exc_info=True)
-                print(f"[ask] {type(error).__name__}: {error}")
+                logger.debug("the agent failed", exc_info=True)
+                print(f"[agent] {type(error).__name__}: {error}")
                 raise CommandError(
                     f"I could not reach the language model on the Ara ({type(error).__name__}). "
                     f"Check that the connector is running: cd connector && ./run.sh") from error
             finally:
-                self.on_status("ask: ready")
-            print(f"[ask] {perf_counter() - started:.1f}s | {question!r} -> {answer!r}")
+                self.on_status("agent: ready")
+            print(f"[agent] {perf_counter() - started:.1f}s | {question!r} -> {answer!r}")
         return answer or "I do not have an answer for that."
 
     def _build_tools(self) -> list:
@@ -129,17 +130,24 @@ class AskAgent:
 
         @tool
         def get_time() -> str:
-            """Return the current date and time on the device."""
-            now = datetime.now().strftime("%A %Y-%m-%d %H:%M")
-            print(f"    [ask] tool get_time -> {now}")
+            """Return the current date, time and time zone on the device."""
+            # astimezone() is what puts the zone on it: a naive datetime has none, and %Z would be
+            # blank. It reads the board's own TZ, so a demo travelling to a booth reports local time.
+            now = datetime.now().astimezone().strftime("%A %Y-%m-%d %H:%M %Z (UTC%z)")
+            print(f"    [agent] tool get_time -> {now}")
             return now
 
         @tool
         def get_status() -> str:
             """Return the alarm state, the registered users and what the camera can see right now."""
             status = describe_status()
-            print(f"    [ask] tool get_status -> {status}")
+            print(f"    [agent] tool get_status -> {status}")
             return status
+
+        @tool
+        def take_screenshot() -> str:
+            """Take a picture of what is on screen now and upload it to the cloud."""
+            return run(commands.SNAPSHOT)
 
         @tool
         def arm_alarm() -> str:
@@ -187,7 +195,7 @@ class AskAgent:
             """
             return run(commands.UNLOCK_OBJECT, name)
 
-        return [get_time, get_status, arm_alarm, disarm_alarm,
+        return [get_time, get_status, take_screenshot, arm_alarm, disarm_alarm,
                 register_user, unregister_user, lock_object, unlock_object]
 
     def _run(self, verb: str, argument: str = "") -> str:
@@ -197,8 +205,8 @@ class AskAgent:
         phonetically ("Michael" -> Marija) would act on the wrong person. When the name is not there,
         `app.py`'s refusal says which names are, and the model relays that.
         """
-        print(f"    [ask] tool {verb}{' ' + repr(argument) if argument else ''}")
+        print(f"    [agent] tool {verb}{' ' + repr(argument) if argument else ''}")
         try:
-            return self.run_command(Command(verb, argument, f"ask: {verb}", is_exact=True))
+            return self.run_command(Command(verb, argument, f"agent: {verb}", is_exact=True))
         except CommandError as error:
             return str(error)

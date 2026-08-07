@@ -3,7 +3,7 @@
 #   ./run.sh                                     # NPU (default): YOLO + SFace on Neutron, voice on
 #   ./run.sh --no-voice                          # video only; no eIQ payload, no venv packages
 #   ./run.sh --model models/yolo11n_int8.tflite  # full-CPU baseline
-#   ./run.sh --no-ask                            # without the LLM on the Ara-240
+#   ./run.sh --no-agent                          # without the LLM on the Ara-240
 #   ./run.sh --text-commands command.txt         # debug: also take commands from a file
 # The backend follows the model name: a '..._neutron.tflite' model auto-uses the delegate.
 # YuNet face detection and the whole voice stack always run on the CPU.

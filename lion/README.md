@@ -15,16 +15,17 @@ Everything koala proved is unchanged. `iguana` had the whole demo bar one thing:
 visitor could ask for had to be a command somebody had written down — a spoken phrase the parser
 knew, or a button on the dashboard.
 
-**koala adds `ask`.** Type a sentence into the /IOTCONNECT dashboard and it is answered by
-**Qwen2.5-7B-Instruct running on the Ara-240 DNPU**, whose tools are the demo's own command
-handlers:
+**koala adds the `agent` command.** Type a sentence into the /IOTCONNECT dashboard and it is
+answered by **Qwen2.5-7B-Instruct running on the Ara-240 DNPU**, whose tools are the demo's own
+command handlers:
 
 | you type | what happens |
 |---|---|
-| `ask please disarm the alarm` | the model calls the `disarm_alarm` tool — the alarm really disarms |
-| `ask register another user Michael` | `register_user("Michael")`, against the face on screen |
-| `ask is the alarm on, and who can you see?` | `get_status`, then an answer in plain English |
-| `ask what time is it?` | `get_time` — the model has no clock of its own |
+| `agent please disarm the alarm` | the model calls the `disarm_alarm` tool — the alarm really disarms |
+| `agent register another user Michael` | `register_user("Michael")`, against the face on screen |
+| `agent is the alarm on, and who can you see?` | `get_status`, then an answer in plain English |
+| `agent what time is it?` | `get_time` — the model has no clock of its own |
+| `agent take a screenshot` | `take_screenshot` — saved and uploaded, same as the button |
 
 Three things are worth saying up front, because they are the design:
 
@@ -75,7 +76,7 @@ diagnostics nobody runs at a booth, and is expected to be thrown away before thi
 |---|---|---|
 | `main.py` | composition root + the 30 fps frame loop + the argument surface | main |
 | **`app/app.py`** | `AntiTheftApp`: alarm state machine + every command handler | app |
-| **`app/ask.py`** | the LLM's tools, its prompt, and one question at a time | app |
+| **`app/agent.py`** | the LLM's tools, its prompt, and one question at a time | app |
 | `applib/commands.py` | sentence → `Command`, and the 4-thread pool that runs it | app |
 | `applib/voice.py` | wake word → blip → VAD capture → transcript → spoken reply | audiotext |
 | `applib/vocabulary.py` + `config/vocabulary.json` | saying names right, and recognising them when STT mangles them | audiotext |
@@ -94,7 +95,7 @@ diagnostics nobody runs at a booth, and is expected to be thrown away before thi
 | `connector/` | NXP's eIQ AAF Connector: the LLM's home, its own venv, installed separately | — |
 | `agenttools/mic-check.py` | standalone audio first-aid tool — no payload, no venv | — |
 | `agenttools/iotc-check.py` | standalone /IOTCONNECT first-aid: connect, S3, KVS, one message | — |
-| `agenttools/ask-probe.py` | the `ask` path with a fake demo behind it — runs from the host | — |
+| `agenttools/agent-probe.py` | the `agent` path with a fake demo behind it — runs from the host | — |
 | `agenttools/diag-face.py` | checks the board's `cv2` has the face classes | — |
 | `benchmarks/ara/` | what the Ara-240 costs per token, and per question | — |
 
@@ -109,8 +110,8 @@ voice.py ──┐  a sentence, parsed
            ├─► CommandService (4 threads) ─► app.on_command ─► "Registered Michael."
 iotc.py  ──┘  a verb + arguments             │      ▲              │
               already structured             │      │              │
-                                             │   app/ask.py ───────┤  the LLM's tools, from
-                                             │   (a tool call)     │  inside a running 'ask'
+                                             │   app/agent.py ─────┤  the LLM's tools, from
+                                             │   (a tool call)     │  inside a running 'agent'
                                              └─ raises ────────────┴─► "Michael is already
                                                 CommandError            registered."
 ```
@@ -127,56 +128,58 @@ The two entry points meet in `execute()`, one line later. Nothing in `app.py` or
 to make room for the cloud, and `app.py` still does not import `iotc.py`.
 
 Four worker threads, not one: `describe scene` occupies a thread for tens of seconds inside the VLM,
-`ask` does the same inside the LLM, and an `arm` arriving meanwhile should not queue behind either.
+`agent` does the same inside the LLM, and an `arm` arriving meanwhile should not queue behind either.
 Four is also the ceiling that leaves the A55s enough headroom for the camera and YOLO to hold 30 fps.
 
 **The one re-entrant command.** Every handler runs under a single lock, so no two commands touch the
-registry at once — except `ask`, which is deliberately held *outside* it. An ask sits inside the
-model for tens of seconds and its tools come back in through `on_command`, so taking the lock around
-it would deadlock the demo against itself. `ask.py` allows one question at a time instead, which
-costs nothing: the Ara generates serially anyway.
+registry at once — except `agent`, which is deliberately held *outside* it. A question sits inside
+the model for tens of seconds and its tools come back in through `on_command`, so taking the lock
+around it would deadlock the demo against itself. `agent.py` allows one question at a time instead,
+which costs nothing: the Ara generates serially anyway.
 
-## Ask: plain English, on the Ara-240
+## Agent: plain English, on the Ara-240
 
 ```
-dashboard: ask please disarm the alarm
+dashboard: agent please disarm the alarm
    │
-   ├─ iotc.py ─► CommandService ─► app._ask ─► ask.py ─ HTTP ─► connector (own venv, port 3000)
+   ├─ iotc.py ─► CommandService ─► app._agent ─► agent.py ─ HTTP ─► connector (venv, port 3000)
    │                                                                 │
    │                                                            Ara-240 DNPU, 7B resident
    │                                                                 │
    │                        app.on_command(DISARM) ◄── tool call ◄───┘
-   └─◄ ack "Answered."   and the answer itself, once, as the `answer` attribute
+   └─◄ ack: the first 40 characters, and the whole answer, once, as the `answer` attribute
 ```
 
 **Read the answer in telemetry, not in the ack.** The dashboard renders an acknowledgement as a
-tooltip, where anything longer than a few words is unreadable, so `ask` is acked the way `scene` is:
-a short confirmation, with the text itself sent once as an attribute. Voice has no such limit — if
-`ask` is ever wired to the microphone, the whole answer is what gets spoken.
+tooltip, where anything longer than a few words is unreadable, so the ack carries the *beginning*
+of the answer — enough to tell one reply from another — and the whole text is sent once as the
+`answer` attribute. Voice has no such limit: if `agent` is ever wired to the microphone, the entire
+answer is what gets spoken.
 
-Eight tools are offered: `get_time`, `get_status`, `arm_alarm`, `disarm_alarm`, `register_user`,
-`unregister_user`, `lock_object`, `unlock_object`. Adding a ninth is a docstring and a one-line call
-in `app/ask.py` — but read the limits first:
+Nine tools are offered: `get_time`, `get_status`, `take_screenshot`, `arm_alarm`, `disarm_alarm`,
+`register_user`, `unregister_user`, `lock_object`, `unlock_object`. Adding a tenth is a docstring
+and a one-line call in `app/agent.py` — but read the limits first:
 
 - **4096 tokens total, prompt plus generation**, compiled into the model; the Ara's 16 GB holds
-  weights, not context. Every tool schema is part of *every* prompt, and eight of them cost roughly
-  500 tokens. This is also why each question builds a **fresh agent**: strands would otherwise keep
-  the conversation, and a booth running all day would overflow the window by mid-morning.
+  weights, not context. Every tool schema is part of *every* prompt, and nine of them cost roughly
+  600 tokens. This is also why each question builds a **fresh agent**: strands would otherwise keep
+  the conversation, and a booth running all day would overflow the window by mid-morning. Keep tool
+  descriptions — and what a tool *returns* — short for the same reason.
 - **~5 tokens/second.** Measured: 11–12 s for "please disarm the alarm", 37 s when the model felt
-  chatty about the date. The `ask:` line on the HUD says `thinking` while it is working.
+  chatty about the date. The `agent:` line on the HUD says `thinking` while it is working.
 - **Temperature must never be 0.0.** The Ara samples on-device and cannot sample from a degenerate
   distribution; NXP's shipped default of 0.0 makes every request fail with an HTTP 500 whose
   traceback points at transformers and is entirely misleading.
 - **The connector needs a patch** for OpenAI tool-call conformance, or strands drops every tool call
   and the model reissues it forever. `connector/install.sh` applies it. See `connector/README.md`.
 
-The LLM is optional in every direction. No connector, no `strands-agents`, or `--no-ask`: the demo
-runs, the HUD says so, and `ask` refuses politely.
+The LLM is optional in every direction. No connector, no `strands-agents`, or `--no-agent`: the demo
+runs, the HUD says so, and `agent` refuses politely.
 
 To try the whole path without a camera, models or even a board, from the host:
 
 ```bash
-.venv/bin/python koala/agenttools/ask-probe.py --url http://<board>:3000/v1 \
+.venv/bin/python agenttools/agent-probe.py --url http://<board>:3000/v1 \
     "please disarm the alarm"
 ```
 
@@ -187,7 +190,7 @@ To try the whole path without a camera, models or even a board, from the host:
 Create the device from the **alrmtheft** template (`files/alrmtheft.json`, at the top of this repo —
 it configures the cloud, and nothing on the board reads it). It declares the seven telemetry
 attributes and the ten commands below, and the names have to match. koala added two of them: the
-`ask` command and the `answer` attribute.
+`agent` command and the `answer` attribute.
 Two template settings are not in that file and have to be ticked in the web UI:
 
 | setting | what breaks without it |
@@ -209,8 +212,12 @@ Every 4 seconds, and immediately whenever the alarm state changes:
 | `objects` | `Nick, person, laptop` | the tracker, names filled in by face recognition |
 | `fps` | `27.4` | the frame loop, twice a second |
 | `scene` | the VLM's answer | **once**, after a `scene` command — not repeated afterwards |
-| `answer` | the LLM's answer, in full | **once**, after an `ask` command — this is where to read it |
-| `version`, `sdk_version` | `koala-1.0`, `1.3.0` | constants |
+| `answer` | the LLM's answer, in full | **once**, after an `agent` command — this is where to read it |
+| `version`, `sdk_version` | `1.0.0`, `1.3.0` | constants |
+
+A one-shot attribute is **left out of every other packet**, not sent as `null`: the back end treats
+an absent field and a null one differently, and "nobody asked a question this tick" is the absent
+case. `telemetry.collect()` is where that is dropped.
 
 ### What comes in
 
@@ -223,12 +230,12 @@ Every 4 seconds, and immediately whenever the alarm state changes:
 | `scene` | optional question | `Scene described.` — the text itself goes to the `scene` attribute |
 | `snapshot` | — | `Snapshot uploaded.` (S3) or the reason it was not |
 | `restart` | — | `Restarting.`, then the process comes back three seconds later |
-| `ask` | a question, in words | `Answered.` — the answer itself goes to the `answer` attribute. 10–40 s |
+| `agent` | a question, in words | the answer's first 40 characters — the whole of it goes to the `answer` attribute. 10–40 s |
 
 `scene` with no argument asks the model to describe what it sees. With one, the argument *is* the
 question: `scene what is the person wearing`.
 
-`ask` is the one command whose argument is a whole sentence rather than a name. The SDK hands
+`agent` is the one command whose argument is a whole sentence rather than a name. The SDK hands
 arguments over already split on whitespace, so joining them back is what reconstructs the question —
 which also means the question survives, but its double spaces do not.
 
@@ -370,7 +377,7 @@ Useful ways to run it:
 
 ```bash
 ./run.sh --no-voice                            # video only: no eIQ payload, no pip packages needed
-./run.sh --no-ask                              # no LLM; 'ask' then refuses politely
+./run.sh --no-agent                            # no LLM; 'agent' then refuses politely
 ./run.sh --ara-url http://<other-board>:3000/v1  # the connector somewhere else
 ./run.sh --no-iotc                             # no cloud, same as having no credentials here
 ./run.sh --iotc-verbose                        # log every MQTT packet, both directions
@@ -401,7 +408,7 @@ koala/
 ├── install.sh  run.sh      the two hooks, board-side
 ├── app/                    what the demo does — the owner's domain
 │   ├── app.py              alarm state machine + every command handler
-│   └── ask.py              the LLM's tools and prompt
+│   └── agent.py            the LLM's tools and prompt
 ├── applib/                 how it does it — cameras, models, faces, audio, cloud, WebRTC
 ├── config/                 audio.json, vocabulary.json
 ├── agenttools/             checks for when something is wrong; not part of the demo

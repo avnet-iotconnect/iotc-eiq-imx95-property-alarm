@@ -19,7 +19,7 @@ The REST boundary costs about 16–30 % of decode throughput and nothing on TTFT
 model, an OpenAI endpoint, and a dependency wall between the Ara's torch and the BSP's
 `tflite_runtime`/`gi`/`cv2` — worth it, but not free.
 
-## What that means for `ask` (measured 2026-08-04, host → board)
+## What that means for `agent` (measured 2026-08-04, host → board)
 
 | question | tool called | wall clock |
 |---|---|---|
@@ -30,6 +30,6 @@ model, an OpenAI endpoint, and a dependency wall between the Ara's torch and the
 Two turns, not one: the model calls a tool, reads the result, then writes prose. The spread is the
 length of the *answer*, nothing else — the third one wrote a long sentence about the date.
 
-Context is **4096 tokens total**, prompt plus generation, compiled into the model. koala's eight
-tool schemas cost roughly 500 of them, which is why `app/ask.py` builds a fresh agent per question
+Context is **4096 tokens total**, prompt plus generation, compiled into the model. Nine tool
+schemas cost roughly 600 of them, which is why `app/agent.py` builds a fresh agent per question
 rather than keeping the conversation.

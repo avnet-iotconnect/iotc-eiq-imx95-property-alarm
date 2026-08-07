@@ -41,7 +41,7 @@
         {
             "name": "answer",
             "type": "STRING",
-            "description": "The LLM's answer to the last 'ask' command, in full (the ack is truncated)",
+            "description": "The LLM's answer to the last 'agent' command, in full (the ack is truncated to 40)",
             "unit": "",
             "aggregateTypes": []
         },

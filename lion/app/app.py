@@ -10,15 +10,17 @@ methods:
 
 Reading those two methods top to bottom is the whole behaviour of the demo.
 
-**The LLM is a command source, not a decision maker.** `ask` hands a sentence to the 7B model on
-the Ara-240 (`ask.py`), whose tools come back in through `on_command` - so the model can arm the
+**The LLM is a command source, not a decision maker.** `agent` hands a sentence to the 7B model on
+the Ara-240 (`agent.py`), whose tools come back in through `on_command` - so the model can arm the
 alarm, but it never decides *whether* the alarm should go off. That stays where it is below, in
 about fifteen lines of `if`.
 
 **The cloud is not a collaborator here.** `iotc.py` is nowhere in this file. What the dashboard
 needs is *written* into `telemetry.TelemetryState` - a plain dict behind a lock - and the
 /IOTCONNECT publisher reads it on its own thread. So the alarm logic never blocks on a network call,
-and the whole video half still runs with the SDK not installed.
+and the whole video half still runs with the SDK not installed. The one thing this file does ask the
+cloud to *do* - upload a snapshot - arrives as a plain callable (`upload_capture`), so uploading
+stays one line here and every line of S3 stays in `iotc.py`.
 
 **Handlers return the sentence to say, or raise `CommandError`.** That is the entire contract with
 `commands.py`, and it is what makes one implementation serve both voice (which speaks the text) and
@@ -53,8 +55,8 @@ from applib.telemetry import TelemetryState
 from applib.tracking import Track
 from applib.vocabulary import Vocabulary
 
-if TYPE_CHECKING:  # imported for the type only: ask.py pulls in strands-agents, which may not be there
-    from app.ask import AskAgent
+if TYPE_CHECKING:  # imported for the type only: agent.py pulls in strands-agents, which may not be there
+    from app.agent import AgentService
 
 # How long a sighting still counts for. The tracker reports only tracks seen *this* frame - it
 # deliberately remembers nothing - and YOLO drops a person for the odd frame, so asking "is a person
@@ -73,7 +75,8 @@ class AntiTheftApp:
         vocab: Vocabulary, telemetry: TelemetryState, scene: SceneDescriber | None = None,
         capture_path: Path = Path("capture.jpg"), on_restart: Callable[[], None] | None = None,
         get_display_frame: Callable[[], np.ndarray | None] | None = None,
-        ask_agent: "AskAgent | None" = None,
+        agent: "AgentService | None" = None,
+        upload_capture: Callable[[], str] | None = None,
     ) -> None:
         self.registry = registry
         self.overlay = overlay
@@ -85,7 +88,8 @@ class AntiTheftApp:
         self.capture_path = capture_path  # one file, overwritten: the snapshot the cloud uploads
         self.on_restart = on_restart    # None when nothing can restart us (see _restart)
         self.get_display_frame = get_display_frame or (lambda: None)  # the composed picture, if any
-        self.ask_agent = ask_agent      # the LLM on the Ara-240; None when it is off or unreachable
+        self.agent = agent              # the LLM on the Ara-240; None when it is off or unreachable
+        self.upload_capture = upload_capture  # the cloud's uploader; None when there is no cloud
         self.alarm_state = AlarmState.ARMED if state.is_armed else AlarmState.DISARMED
         # _set_state only speaks up on a *change*, so the state we booted into has to be published
         # here - otherwise a demo that is left disarmed never reports an alarm value at all.
@@ -107,7 +111,7 @@ class AntiTheftApp:
             commands.DESCRIBE_SCENE: self._describe_scene,
             commands.SNAPSHOT: self._snapshot,
             commands.RESTART: self._restart,
-            commands.ASK: self._ask,
+            commands.AGENT: self._agent,
         }
 
     # --- the two event methods ----------------------------------------------------------------
@@ -140,14 +144,14 @@ class AntiTheftApp:
         """Run one command and return what to say. Raises CommandError with a speakable reason.
 
         Everything runs under one lock, so no two commands mutate the registry at once - except
-        `ask`, which is held outside it. An ask sits inside the LLM for tens of seconds and its
+        `agent`, which is held outside it. A question sits inside the LLM for tens of seconds and its
         tools come back in through this same method, so taking the lock around it would deadlock
-        the demo against itself. `ask.py` allows one question at a time for the same reason.
+        the demo against itself. `agent.py` allows one question at a time for the same reason.
         """
         handler = self._handlers.get(command.verb)
         if handler is None:  # only reachable from a C2D payload naming a verb we do not have
             raise CommandError(f"I do not know how to {command.verb.replace('_', ' ')}.")
-        if command.verb == commands.ASK:
+        if command.verb == commands.AGENT:
             return handler(command)
         with self._lock:
             return handler(command)
@@ -217,7 +221,12 @@ class AntiTheftApp:
         return f"The {class_name} is unlocked."
 
     def _snapshot(self, command: Command) -> str:
-        """Write what the screen is showing to `capture.jpg`, overwriting the last one.
+        """Write what the screen is showing to `capture.jpg` and upload it, overwriting the last one.
+
+        Saving and uploading are one command because to everyone who asks for one - the dashboard
+        button, a spoken "take a screenshot", the LLM's `take_screenshot` tool - a picture that
+        stayed on the board is not a screenshot at all. `upload_capture` is `iotc.py`'s, handed over
+        by `main.py`; with no cloud it is None and the file is simply written.
 
         Re-rendering the boxes in OpenCV was once the only way to do this, because the compositor
         will not give the picture back: weston 14 only lets a client it launched itself take a
@@ -230,6 +239,10 @@ class AntiTheftApp:
 
         One file, not one per press: the board is where it is cheap to overwrite and S3 is where
         history is kept - /IOTCONNECT timestamps each upload of `capture.jpg` on the way in.
+
+        The upload happens with the command lock held, so a slow one delays the *next* command by
+        as long as it takes. That is a hundred kilobytes over the booth's network, and paying it
+        here is what lets one command mean one finished thing.
         """
         composed = self.get_display_frame()
         if composed is not None:
@@ -240,7 +253,9 @@ class AntiTheftApp:
         else:
             raise CommandError("I do not have a camera frame yet.")
         print(f"[app] snapshot -> {saved}")
-        return "Snapshot saved."
+        if self.upload_capture is None:
+            return "Snapshot saved."
+        return self.upload_capture()
 
     def _describe_scene(self, command: Command) -> str:
         """Hand the current frame, boxes and all, to the VLM. Slow on purpose - see scene.py.
@@ -257,25 +272,24 @@ class AntiTheftApp:
         self.telemetry.set_once(scene=description)
         return description
 
-    def _ask(self, command: Command) -> str:
-        """Hand a plain-English question to the LLM on the Ara-240. Slow on purpose - see ask.py.
+    def _agent(self, command: Command) -> str:
+        """Hand a plain-English question to the LLM on the Ara-240. Slow on purpose - see agent.py.
 
         The whole sentence is the argument: unlike every other command here, nothing was parsed out
         of it. What comes back may be an answer ("the alarm is armed and I can see Nick") or the
         result of the model having *done* something - its tools run these same handlers, so
         "please disarm the alarm" arrives here and leaves through `_disarm`.
 
-        The answer goes to the cloud as a one-shot `answer` telemetry attribute - once, not on every
-        tick - because the dashboard renders a C2D ack as a tooltip, where a paragraph is unreadable.
-        The ack says "Answered"; `iotc.py` does that rewrite, the same way it does for `scene`.
-        Voice, which has no such limit, would speak this whole string.
+        The whole answer is returned - voice would speak it, and it goes to the cloud as a one-shot
+        `answer` telemetry attribute, once rather than on every tick. Only the C2D acknowledgement
+        is shortened, in `iotc.py`, because the dashboard renders an ack as a tooltip.
         """
-        if self.ask_agent is None:
+        if self.agent is None:
             raise CommandError("The assistant is not available. Start the connector on the Ara-240.")
         question = (command.argument or command.text).strip()
         if not question:
             raise CommandError("What would you like to ask?")
-        answer = self.ask_agent.ask(question)
+        answer = self.agent.ask(question)
         self.telemetry.set_once(answer=answer)
         return answer
 
@@ -293,13 +307,22 @@ class AntiTheftApp:
         self.on_restart()
         return "Restarting."
 
-    def set_ask_agent(self, ask_agent: "AskAgent | None") -> None:
-        """Give the app its LLM after the fact - the one back-edge in the object graph.
+    def set_agent(self, agent: "AgentService | None") -> None:
+        """Give the app its LLM after the fact - one of two back-edges in the object graph.
 
         The agent's tools run these handlers, so it cannot be built before the app that owns them.
         `main.py` builds the app, then the agent, then hands it back here.
         """
-        self.ask_agent = ask_agent
+        self.agent = agent
+
+    def set_upload_capture(self, upload_capture: Callable[[], str] | None) -> None:
+        """Give the app a way to upload `capture.jpg` - the other back-edge, for the same reason.
+
+        `iotc.py` owns the upload, and the /IOTCONNECT client cannot be built before the command
+        service, which cannot be built before this app. It returns what to say ("Snapshot
+        uploaded.") or raises `CommandError` like any handler would.
+        """
+        self.upload_capture = upload_capture
 
     def get_status(self) -> str:
         """One line of ground truth, for the model to read before it answers a question about us.

@@ -5,7 +5,7 @@
 #   ssh root@<board> 'cd <demo-dir>/connector && ./install.sh'
 #
 # Kept out of the demo's own install.sh on purpose: this is gigabytes and minutes for
-# one optional command ('ask'), and the demo runs without it.
+# one optional command ('agent'), and the demo runs without it.
 #
 # This directory is already laid out the way the connector expects, so copying it
 # over is the whole deployment: config/server_config.json is read from here, and

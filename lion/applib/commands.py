@@ -11,11 +11,11 @@ usually getting one anchor word right.
 
 **`CommandService` - running it.** Every command source funnels through here: voice, the debug file
 and /IOTCONNECT C2D. Handlers run on a small thread pool (4 workers) so a slow command - `describe
-scene` takes tens of seconds inside the VLM, and `ask` tens of seconds inside the LLM on the
+scene` takes tens of seconds inside the VLM, and `agent` tens of seconds inside the LLM on the
 Ara-240 - never stalls the 30 fps video loop.
 
-There is one command that comes back the *other* way. `ask` hands a sentence to the model on the
-Ara, whose tools then run commands of their own (`app/ask.py`) - so a handler can be re-entered
+There is one command that comes back the *other* way. `agent` hands a sentence to the model on the
+Ara, whose tools then run commands of their own (`app/agent.py`) - so a handler can be re-entered
 from inside another handler. `AntiTheftApp.on_command` is where that is dealt with, and it is the
 only exception to "one command at a time" in the demo.
 
@@ -56,7 +56,7 @@ UNLOCK_OBJECT = "unlock_object"
 DESCRIBE_SCENE = "describe_scene"
 SNAPSHOT = "snapshot"
 RESTART = "restart"  # no anchor words below on purpose: a mangled transcript must not restart us
-ASK = "ask"          # likewise: a whole sentence for the LLM, so there is nothing to anchor on
+AGENT = "agent"      # likewise: a whole sentence for the LLM, so there is nothing to anchor on
 
 NOT_UNDERSTOOD = "Sorry, I did not understand that."
 

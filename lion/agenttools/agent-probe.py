@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Exercise the `ask` path with a fake demo behind it - no camera, no models, no board needed.
+"""Exercise the `agent` path with a fake demo behind it - no camera, no models, no board needed.
 
-`AskAgent` only ever talks to two callables and one HTTP endpoint, so everything below the LLM can
+`AgentService` only ever talks to two callables and one HTTP endpoint, so everything below the LLM can
 be replaced by thirty lines of dictionary. That makes this the fastest way to answer the three
 questions that actually go wrong:
 
@@ -11,8 +11,8 @@ questions that actually go wrong:
 
 Run it from the host, pointed at the board:
 
-    python3 agenttools/ask-probe.py --url http://<board>:3000/v1
-    python3 agenttools/ask-probe.py "register another user Michael"
+    python3 agenttools/agent-probe.py --url http://<board>:3000/v1
+    python3 agenttools/agent-probe.py "register another user Michael"
 
 Needs only `strands-agents` and `openai` - no BSP packages, nothing from the vision half. If this
 works and the demo does not, the difference is the demo, not the Ara.
@@ -27,8 +27,8 @@ from time import perf_counter
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import ask  # noqa: E402
-from app.ask import AskAgent  # noqa: E402
+from app import agent as agent_module  # noqa: E402
+from app.agent import AgentService  # noqa: E402
 from applib import commands  # noqa: E402
 from applib.commands import Command, CommandError  # noqa: E402
 
@@ -41,7 +41,7 @@ QUESTIONS = [
 
 
 class FakeApp:
-    """The whole contract `AskAgent` has with the demo: run a command, and describe the state.
+    """The whole contract `AgentService` has with the demo: run a command, and describe the state.
 
     Same method names and same failure channel as `app.py`, so a tool that works here works there.
     """
@@ -78,6 +78,8 @@ class FakeApp:
                 raise CommandError(f"I do not have a {command.argument} locked.")
             self.locked.remove(command.argument)
             return f"The {command.argument} is unlocked."
+        if command.verb == commands.SNAPSHOT:
+            return "Snapshot uploaded."
         raise CommandError(f"I do not know how to {command.verb}.")
 
     def get_status(self) -> str:
@@ -93,15 +95,16 @@ def main() -> int:
     parser.add_argument("questions", nargs="*", help="what to ask (default: four sample questions)")
     parser.add_argument("--url", default="http://192.168.38.203:3000/v1",
                         help="the connector's OpenAI endpoint")
-    parser.add_argument("--model", default=ask.ARA_MODEL, help="model name the connector serves")
+    parser.add_argument("--model", default=agent_module.ARA_MODEL,
+                        help="model name the connector serves")
     args = parser.parse_args()
 
-    if not ask.IS_STRANDS_AVAILABLE:
+    if not agent_module.IS_STRANDS_AVAILABLE:
         print("strands-agents is not installed: pip install strands-agents openai")
         return 1
 
     fake = FakeApp()
-    agent = AskAgent(fake.on_command, fake.get_status, base_url=args.url, model_id=args.model)
+    agent = AgentService(fake.on_command, fake.get_status, base_url=args.url, model_id=args.model)
     print(f"{args.model} at {args.url}\n{fake.get_status()}\n" + "-" * 70)
 
     for question in args.questions or QUESTIONS:

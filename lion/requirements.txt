@@ -46,10 +46,10 @@ aiortc==1.15.0
 av
 websockets
 
-# The LLM on the Ara-240 ('ask'). Two pure-Python packages and nothing else: the model, torch and
+# The LLM on the Ara-240 ('agent'). Two pure-Python packages and nothing else: the model, torch and
 # optimum-ara all live in connector/venv, in a separate process, behind an HTTP port -- which is the
 # only reason this is installable here at all (optimum-ara pins its own torch and would fight the
-# BSP stack above). See app/ask.py and connector/README.md.
+# BSP stack above). See app/agent.py and connector/README.md.
 strands-agents==1.50.2
 openai==2.52.0
 

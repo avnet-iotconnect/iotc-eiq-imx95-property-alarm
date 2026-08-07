@@ -43,7 +43,7 @@ class Overlay:
         self.voice_status = "voice: loading"
         self.cloud_status = "cloud: off"
         self.stream_status = "stream: off"
-        self.ask_status = "ask: off"
+        self.agent_status = "agent: off"
         self.inference_ms = 0.0
         self.end_to_end_ms = 0.0
 
@@ -69,9 +69,9 @@ class Overlay:
         because everything drawn here is downstream of the encoder tap (see camera.py)."""
         self.stream_status = status
 
-    def set_ask_status(self, status: str) -> None:
+    def set_agent_status(self, status: str) -> None:
         """And for the LLM on the Ara-240 - 'thinking' is worth showing, since it takes ~30 s."""
-        self.ask_status = status
+        self.agent_status = status
 
     def set_timing(self, inference_ms: float, end_to_end_ms: float) -> None:
         self.inference_ms = inference_ms
@@ -130,7 +130,7 @@ class Overlay:
             (self.voice_status, cyan),
             (self.cloud_status, cyan),
             (self.stream_status, cyan),
-            (self.ask_status, cyan),
+            (self.agent_status, cyan),
         ]
 
     def _draw_hud(self, context: cairo.Context) -> None:

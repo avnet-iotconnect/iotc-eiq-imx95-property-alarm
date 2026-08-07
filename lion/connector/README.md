@@ -4,7 +4,7 @@ NXP's REST server that keeps an LLM resident on the Ara-240 and exposes it at
 `POST /v1/chat/completions`. It is how an agent reaches the DNPU without importing torch or the Ara
 SDK — the whole ML stack stays on the far side of HTTP.
 
-This is the demo's `ask` command, one process removed. koala reaches it over HTTP and therefore
+This is the demo's `agent` command, one process removed. The demo reaches it over HTTP and therefore
 needs no ML dependencies at all; everything heavy — torch, optimum-ara, the model itself — lives in
 the venv this directory builds. Sources are at <https://github.com/nxp-imx-support/eiq-aaf-connector>.
 The licence is proprietary, so only the config, the patch and these scripts are committed here.
@@ -25,11 +25,11 @@ Verified on BSP `LF6.18.2-1.0.0`, rt-sdk-ara2 **2.0.4**, Ara-240 firmware 131072
 
 ## Install
 
-**This directory is the deployment.** It arrives with the rest of koala; run its installer on the
+**This directory is the deployment.** It arrives with the rest of the demo; run its installer on the
 board, not on the host:
 
 ```bash
-cd ~/koala/connector && ./install.sh     # ~1.2 GB, a few minutes, needs the network
+cd <demo-dir>/connector && ./install.sh  # ~1.2 GB, a few minutes, needs the network
 ./run.sh                                 # then ~225 s to load the 7B onto the Ara-240
 tail -f server.log                       # ready when it says: Uvicorn running on http://0.0.0.0:3000
 ```
@@ -116,7 +116,7 @@ of the Ara's 16 GB, so it cannot share with a 7B. VL models want `type: "qwen_vl
 | agent loops, reissuing one tool | the patch is not applied, or the connector was not restarted after it |
 | `404 Model not found` | no model loaded, or the name does not match `GET /v1/models` |
 | `ImportError` on a Qwen-VL class at startup | the wrong `optimum-ara` wheel for the connector release — see Install |
-| koala's HUD says `ask: ready` but every question fails | the connector is not up; `./run.sh` and watch `server.log` |
+| the HUD says `agent: ready` but every question fails | the connector is not up; `./run.sh` and watch `server.log` |
 
 `ss` is not installed on this board — use `netstat -lnt` or `/proc/net/tcp`. `pkill -f connector`
 over ssh kills your own session, because the pattern matches the remote command line; `run.sh` uses

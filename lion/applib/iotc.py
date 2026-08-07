@@ -17,18 +17,20 @@ What flows each way:
           `answer` when someone asked the LLM one
     C2D   the ten commands in the alrmtheft device template, mapped to our verbs by `C2D_VERBS`;
           every one is acknowledged with the same sentence the demo would have spoken
-    S3    `snapshot` writes capture.jpg and uploads it; /IOTCONNECT timestamps each version
+    S3    `upload_capture()` puts capture.jpg in the bucket; /IOTCONNECT timestamps each version.
+          The snapshot *handler* calls it, through a callable `main.py` handed the app - so saving
+          and uploading are one command, and `app.py` still imports nothing from here
     KVS   the signalling channel ARN and the AWS credentials `webrtc.py` signs its socket with
 
-Three acks get **rewritten** here, and only here, because the dashboard shows an ack as a *tooltip*:
-a sentence is readable there, a paragraph is not. `snapshot` says "Snapshot uploaded", which is a
-different fact from "snapshot saved"; `scene` and `ask` say "Scene described" and "Answered", and
-the text somebody actually wanted arrives as the `scene` and `answer` attributes instead - **once
-each**, by `set_once`, so a one-off answer is never repeated on the next tick.
+Two acks are **shortened** here, and only here, because the dashboard shows an ack as a *tooltip*:
+a sentence is readable there, a paragraph is not. `scene` says "Scene described." and the LLM's
+answer is cut to `MAX_AGENT_ACK_CHARS` - enough to recognise which answer came back, no more.
+Either way the text somebody actually wanted arrives as the `scene` or `answer` attribute -
+**once**, by `set_once`, so a one-off answer is never repeated on the next tick.
 
-`ask` is also the one command whose argument is a sentence rather than a name, and the SDK hands
+`agent` is also the one command whose argument is a sentence rather than a name, and the SDK hands
 arguments over already split on whitespace - so joining them back is what reconstructs the question.
-Two commands here can take tens of seconds (`ask`, `scene`); nothing waits on them but the person
+Two commands here can take tens of seconds (`agent`, `scene`); nothing waits on them but the person
 who sent them, because the ack goes out when the future completes.
 
 The KVS half is a handover and nothing more. This file learns the channel ARN when it connects and
@@ -51,7 +53,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Callable
 
 from applib import commands
-from applib.commands import Command, CommandService
+from applib.commands import Command, CommandError, CommandService
 from applib.telemetry import TelemetryState
 
 if TYPE_CHECKING:  # imported for the type only: webrtc.py pulls in aiortc, which may not be there
@@ -81,7 +83,7 @@ C2D_VERBS = {
     "scene": commands.DESCRIBE_SCENE,
     "snapshot": commands.SNAPSHOT,
     "restart": commands.RESTART,
-    "ask": commands.ASK,
+    "agent": commands.AGENT,
 }
 
 TELEMETRY_INTERVAL_S = 4.0
@@ -89,6 +91,7 @@ MIN_SEND_GAP_S = 1.0        # a flapping alarm state must not turn into an MQTT 
 RECONNECT_WAIT_S = 30.0     # after a failure that took the client down entirely
 CREDENTIALS_MARGIN_S = 120  # refresh AWS credentials this long before they expire
 MAX_ACK_CHARS = 200         # acks are a status line, not a transcript
+MAX_AGENT_ACK_CHARS = 60    # ... and the LLM's answer is a paragraph; the rest is in `answer`
 
 
 class IotcClient:
@@ -295,12 +298,13 @@ class IotcClient:
         try:
             result = future.result()
             is_ok, text = result.is_ok, result.message
-            if is_ok and verb == commands.SNAPSHOT:
-                is_ok, text = self._upload_capture()
-            elif is_ok and verb == commands.DESCRIBE_SCENE:
+            if is_ok and verb == commands.DESCRIBE_SCENE:
                 text = "Scene described."  # the description itself went out as the scene attribute
-            elif is_ok and verb == commands.ASK:
-                text = "Answered."         # likewise: the answer went out as the answer attribute
+            elif is_ok and verb == commands.AGENT:
+                # The beginning of the answer, not a stand-in for it: a tooltip saying "Answered."
+                # leaves the dashboard unable to tell one reply from another. The whole thing went
+                # out as the `answer` attribute a moment ago.
+                text = shorten(text, MAX_AGENT_ACK_CHARS)
         except Exception as error:
             logger.exception("c2d %s failed", verb)
             is_ok, text = False, f"Failed: {type(error).__name__}"
@@ -308,19 +312,25 @@ class IotcClient:
         print(f"[iotc] ack {message.command_name} {'ok' if is_ok else 'failed'} "
               f"in {(monotonic() - received_at) * 1000:.0f} ms on the device: {text}")
 
-    def _upload_capture(self) -> tuple[bool, str]:
-        """Put capture.jpg in the device's S3 bucket, tagged with what we think is in it."""
-        if self._s3 is None:
-            return False, "Snapshot saved, but file upload is not enabled for this device"
+    def upload_capture(self) -> str:
+        """Put capture.jpg in the device's S3 bucket, tagged with what we think is in it.
+
+        The snapshot handler calls this - `main.py` hands it over as a plain callable, so `app.py`
+        never learns what S3 is. It follows a handler's contract rather than this file's: the
+        sentence to say when it works, `CommandError` when it does not. That is what makes the
+        failure readable whether it came from the dashboard, from voice or from the LLM's tool.
+        """
+        if self._client is None or self._s3 is None:
+            raise CommandError("Snapshot saved, but file upload is not enabled for this device.")
         if not self.capture_path.exists():
-            return False, "Snapshot file is missing"
+            raise CommandError("Snapshot saved, but the file is missing.")
         self._client.s3_upload(
             local_path=str(self.capture_path),
             custom_values={"cf": {"alarm": self.telemetry.get("alarm"),
                                   "objects": self.telemetry.get("objects")}},
         )
         print(f"[iotc] uploaded {self.capture_path} ({self.capture_path.stat().st_size} bytes)")
-        return True, "Snapshot uploaded."
+        return "Snapshot uploaded."
 
     def _send_ack(self, message, is_ok: bool, text: str) -> None:
         # No ack_id means the template marked the command as not needing one; no client means a
@@ -346,5 +356,15 @@ class IotcClient:
     def _on_disconnect(self, reason: str, is_from_server: bool) -> None:
         print(f"[iotc] disconnected{' by the server' if is_from_server else ''}: {reason}")
         self.on_status("cloud: offline")
+
+
+def shorten(text: str, limit: int) -> str:
+    """`text` on one line, cut to `limit` characters with an ellipsis when it does not fit.
+
+    The newlines matter as much as the length: a model's answer often arrives with them, and a
+    dashboard tooltip renders the lot as one run-on line anyway.
+    """
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 3].rstrip() + "..."
 
 
