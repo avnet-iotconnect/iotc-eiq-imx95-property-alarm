@@ -184,11 +184,10 @@ class AntiTheftApp:
         read it: "Please come closer to the camera - registering Nick  3". Three goes, then it gives
         up and says why, because a fourth is not going to be the one that works.
 
-        Every attempt also leaves what it measured on the screen, and it stays there afterwards.
-        That is the only way to judge whether the face path is really telling two people apart: the
-        `nearest` figure says which *already registered* user this new face is most like, and a new
-        person scoring high against an old one is a mix-up you can watch happen. No threshold here
-        can catch that - it is the embedder failing, not the pose.
+        Every attempt logs what it measured. The `nearest` figure in that line is the one to read
+        when identity looks wrong: it says which *already registered* user this new face is most
+        like, so a new person scoring high against an old one is a mix-up caught in the act. No
+        threshold here can catch that - it is the embedder failing, not the pose.
 
         This runs on a command thread with the command lock held, so the demo takes no other command
         for the up-to-nine seconds it can last. The video loop is untouched - it takes no lock - so
@@ -197,17 +196,14 @@ class AntiTheftApp:
         name = self._resolve_new_name(command.argument, command.is_exact)
         if name in self.registry.user_names:
             raise CommandError(f"{name} is already registered. Say unregister user {name} first.")
-        self.overlay.set_face_report([])  # the last person's numbers are not about this one
         problem = None
         for attempt in range(REGISTER_ATTEMPTS):
             message = (f"Registering {name} - look at the camera" if problem is None
                        else f"{problem} - registering {name}")
             self._count_down(message, REGISTER_COUNTDOWN_S + attempt * REGISTER_EXTRA_S)
             result = self.face_worker.try_register_user(name, self._last_tracks)
-            verdict = f"{name}: nearest {result.nearest}  ->  {result.problem or 'registered'}"
-            print(f"[app] register {name!r} {attempt + 1}/{REGISTER_ATTEMPTS}: "
-                  f"{result.report}  ({verdict})")
-            self.overlay.set_face_report([result.report, verdict])
+            print(f"[app] register {name!r} {attempt + 1}/{REGISTER_ATTEMPTS}: {result.report}  "
+                  f"nearest {result.nearest}  ->  {result.problem or 'registered'}")
             if result.is_registered:
                 print(f"[app] registered {name!r} (now knows: {', '.join(self.registry.user_names)})")
                 return f"Registered {name}."

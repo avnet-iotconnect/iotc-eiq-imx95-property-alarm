@@ -107,28 +107,20 @@ Matching is deliberately **not** gated the same way: it gets a fresh look five t
 can afford a bad one. Only registration is once-and-for-all.
 
 The thresholds above are starting points, measured off photographs scaled to the size this camera
-sees. Every attempt leaves what it measured **on the screen**, where you can read it without
-leaving the camera, and it stays up until the next registration:
+sees. Every attempt logs what it measured, so tuning them is a matter of registering somebody a few
+times and reading the console:
 
 ```
-size 96px  straight 0.81  score 0.96  sharpness 210  steady 0.94
-Michael: nearest Marija 0.12  ->  registered
+[app] register 'Michael' 1/3: size 96px  straight 0.81  score 0.96  sharpness 210  steady 0.94  nearest Marija 0.12  ->  registered
 ```
 
-The same line goes to the console. Tuning the five thresholds is a matter of registering somebody a
-few times and reading those numbers.
+The screen gets the countdown and nothing else — the numbers are debug, and debug belongs in the log.
 
 `nearest` is the odd one out: it is not a quality measure, it is **which already-registered user
-this new face is most like**. A new person scoring high there is the demo failing to tell two people
-apart, which no threshold above can fix — and on this board today it is 1.00, because the Neutron
-build of SFace is broken:
-
-> ⚠️ **Run the face embedder on the CPU:** `./run.sh --sface-model models/sface_int8.tflite`.
-> `models/sface_neutron.tflite` currently returns the same vector whatever face it is given —
-> three different people embed to a cosine of 1.000 of each other, so everybody matches everybody.
-> The CPU model is correct (0.991 against the reference, different people at 0.05–0.08) and costs
-> ~58 ms on a background thread at 5 Hz, not on the frame loop. YOLO on Neutron is unaffected.
-> The fix is re-converting SFace with a `neutron-converter` build matched to the board's BSP.
+this new face is most like**. A new person scoring high there means the embedder cannot tell two
+people apart, which no threshold above can fix. It is the first thing to read when a name lands on
+the wrong face — and it is how the Neutron SDK 3.0.0 defect above was caught, where it read 1.00 for
+everybody.
 
 ## The pieces
 

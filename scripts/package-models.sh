@@ -31,11 +31,15 @@ echo "== expanding $SDK_ZIP -> $SDK_DIR"
 rm -rf "$SDK_DIR"
 unzip -q "$SDK_ZIP" -d "$SDK_DIR"
 
-# Only when it is actually missing, and into whatever python is active. The export needs ultralytics
-# (and the torch it drags in); the conversion itself is a native binary and needs nothing. Run this
-# from a venv - a system python will refuse to install (PEP 668) and say so.
+# Only when actually missing, and into whatever python is active. YOLO's export needs ultralytics
+# (and the torch it drags in); SFace's quantization needs onnx2tf + tensorflow, and onnx2tf shells
+# out to the `onnxsim` command, so the venv's bin must be on PATH - run this from an activated venv.
+# The Neutron conversion itself is a native binary and needs nothing. A system python will refuse to
+# install (PEP 668) and say so.
 echo "== python dependencies"
 python3 -c "import ultralytics" 2>/dev/null || python3 -m pip install --quiet ultralytics
+python3 -c "import onnx2tf, onnxsim, tensorflow" 2>/dev/null \
+  || python3 -m pip install --quiet onnx2tf onnxsim tensorflow
 
 # The face ONNX models come from the OpenCV zoo. Only fetched when absent: they never change, and a
 # rebuild should not wait on the network.
@@ -43,10 +47,9 @@ if [ ! -f work/models/face_recognition_sface_2021dec.onnx ]; then
   bash scripts/face-models-fetch.sh
 fi
 
-# YOLO: export from ultralytics, quantize to int8, convert for Neutron. SFace: converted from
-# work/models/sface_int8.tflite, which is an *input* here rather than a product - it was quantized
-# by hand (ONNX -> onnx2tf -> TFLiteConverter int8 against aligned RGB face chips) and that step is
-# not yet scripted.
+# SFace: ONNX -> int8, calibrated on the public-domain face chips in files/sface-calib/. Then YOLO:
+# export from ultralytics, quantize to int8, and convert both models for Neutron.
+python3 scripts/sface-quantize.py
 bash scripts/yolo-convert-neutron.sh
 
 # What the board checks at startup. The firmware md5 is the exact handle: the delegate reports only

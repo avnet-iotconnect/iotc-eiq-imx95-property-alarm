@@ -50,7 +50,6 @@ class Overlay:
         self.end_to_end_ms = 0.0
         self.countdown_message = ""
         self.countdown_until = 0.0
-        self.face_report: list[str] = []
 
     def set_tracks(self, tracks: list[Track]) -> None:
         self.tracks = tracks  # atomic reference swap; the draw callback reads the latest
@@ -96,16 +95,6 @@ class Overlay:
 
     def stop_countdown(self) -> None:
         self.countdown_until = 0.0
-
-    def set_face_report(self, lines: list[str]) -> None:
-        """What the last registration attempt measured, kept on screen until the next one.
-
-        On the screen and not only in the log because the person being registered is standing at
-        the camera, not at the console - and judging whether the face path is telling two people
-        apart means reading the numbers *while* changing what the camera sees. It stays up
-        afterwards so it can be read from across the room.
-        """
-        self.face_report = lines
 
     def draw(self, context: cairo.Context) -> None:
         """The cairooverlay `draw` callback: paint boxes, the HUD, and the alarm banner if armed-tripped."""
@@ -174,16 +163,13 @@ class Overlay:
         """'Registering Nick - look at the camera  2', centered along the bottom while it runs.
 
         Bottom, not middle: the person is looking at the camera above the screen, so this sits where
-        it does not cover the face they are checking, nor the ALARM banner. The last attempt's
-        measurements sit just above it, in small type, and outlive the count.
+        it does not cover the face they are checking, nor the ALARM banner. What each attempt
+        *measured* is not drawn - that is debug, and it goes to the console.
         """
-        context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        context.set_font_size(15)
-        for index, line in enumerate(self.face_report):
-            _draw_text(context, line, 10, self.frame_height - 70 + index * 19, (0.15, 0.90, 0.90))
         remaining = self.countdown_until - monotonic()
         if remaining <= 0:
             return
+        context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         context.set_font_size(28)
         text = f"{self.countdown_message}  {ceil(remaining)}"
         extents = context.text_extents(text)
