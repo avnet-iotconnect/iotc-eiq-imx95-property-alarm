@@ -20,7 +20,7 @@ same lock. So the model cannot do anything a dashboard command could not do, and
 **Three limits worth knowing before changing anything here:**
 
 - *4096 tokens, prompt plus generation*, compiled into the model - and every tool schema is part of
-  every prompt. Nine tools cost roughly 600 of them, which is why the descriptions below are one
+  every prompt. Eleven tools cost roughly 700 of them, which is why the descriptions below are one
   line each and why what a tool *returns* is kept short too. That budget is also why each question
   gets a **fresh `Agent`**: strands keeps conversation history, and a booth that runs all day would
   overflow the window by mid-morning. Each question is a clean slate.
@@ -160,6 +160,16 @@ class AgentService:
             return run(commands.DISARM)
 
         @tool
+        def describe_alert() -> str:
+            """Return the event log: what the demo has caught, in order, and how long ago."""
+            return run(commands.DESCRIBE_ALERT)
+
+        @tool
+        def clear_alert() -> str:
+            """Clear the event log, acknowledging whatever the demo has caught."""
+            return run(commands.CLEAR_ALERT)
+
+        @tool
         def register_user(name: str) -> str:
             """Register a new user, binding the given name to the face the camera can see.
 
@@ -196,6 +206,7 @@ class AgentService:
             return run(commands.UNLOCK_OBJECT, name)
 
         return [get_time, get_status, take_screenshot, arm_alarm, disarm_alarm,
+                describe_alert, clear_alert,
                 register_user, unregister_user, lock_object, unlock_object]
 
     def _run(self, verb: str, argument: str = "") -> str:

@@ -51,6 +51,8 @@ UNREGISTER_USER = "unregister_user"
 UNREGISTER_LAST = "unregister_last"
 ARM = "arm"
 DISARM = "disarm"
+CLEAR_ALERT = "clear_alert"
+DESCRIBE_ALERT = "describe_alert"
 LOCK_OBJECT = "lock_object"
 UNLOCK_OBJECT = "unlock_object"
 DESCRIBE_SCENE = "describe_scene"
@@ -108,6 +110,15 @@ _UNLOCK = {"unlock", "unlocked", "unlocking", "onlock", "anlock", "delock"}
 _LOCK = {"lock", "locked", "locking", "guard", "block"}
 _DISARM = {"disarm", "disarmed", "disarming", "desarm", "dearm", "unarm", "disturb"}
 _ARM = {"arm", "armed", "arms", "harm", "alarm"}
+# "clear the alert" has to be tested before _ARM, because "clear the alarm" - which people say, and
+# mean - contains a word in _ARM. The anchor is the verb, so the noun may come out as anything.
+_CLEAR = {"clear", "cleared", "clearing", "acknowledge", "acknowledged", "dismiss", "dismissed",
+          "reset", "resets"}
+# ... and the *noun*, which is what tells "describe the alert" from "describe the scene". Tested
+# before _DESCRIBE for exactly that reason. "happened" is here because "what happened?" is what
+# people actually say, and it anchors nothing else.
+_ALERT = {"alert", "alerts", "alerted", "alart", "log", "logs", "event", "events", "happened",
+          "happening"}
 _DESCRIBE = {"describe", "description", "describes", "scene", "seen", "see", "look"}
 _SNAPSHOT = {"snapshot", "screenshot", "photo", "picture", "snap", "shot"}
 _USER = {"user", "used", "usar", "uses", "eraser", "person", "object"}
@@ -141,6 +152,8 @@ def parse(text: str) -> Command | None:
 
     if _SNAPSHOT & spoken:  # before describe: "take a picture of the scene" is a snapshot
         return command(SNAPSHOT)
+    if _ALERT & spoken and not _CLEAR & spoken:  # before describe: the noun picks which description
+        return command(DESCRIBE_ALERT)
     if _DESCRIBE & spoken:
         return command(DESCRIBE_SCENE)
     if _UNREGISTER & spoken:
@@ -153,6 +166,8 @@ def parse(text: str) -> Command | None:
         return command(UNLOCK_OBJECT, _UNLOCK | _USER)
     if _LOCK & spoken:
         return command(LOCK_OBJECT, _LOCK | _USER)
+    if _CLEAR & spoken:  # before both: "clear the alarm" carries an _ARM word and is not an arming
+        return command(CLEAR_ALERT)
     if _DISARM & spoken:
         return command(DISARM)
     if _ARM & spoken:

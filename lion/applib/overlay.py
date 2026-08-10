@@ -5,14 +5,14 @@ The `cairooverlay` element fires `draw` once per displayed preview frame with a 
 pushes updates in via `set_tracks` / `set_alarm_state`; `main.py` pushes timing. The overlay never
 reads back into the app - one-way, matching the composition-root pattern.
 
-Alarm presentation lives here on purpose: color-per-state and the big centered "ALARM" banner are
-display concerns. `app.py` decides *which* state we're in; this file decides how it looks.
+Alarm presentation lives here on purpose: which colour a state is drawn in, and where the REC mark
+sits, are display concerns. `app.py` decides *what is true*; this file decides how it looks.
 """
 
 from __future__ import annotations
 
 from enum import Enum
-from math import ceil
+from math import ceil, pi
 from time import monotonic
 
 import cairo
@@ -21,11 +21,17 @@ from applib.tracking import Track, color_for
 
 
 class AlarmState(Enum):
-    """The demo's alarm states, each carrying how it should look (label + HUD color, RGB 0..1)."""
+    """The alarm is a *switch*, and these are its two positions (label + HUD color, RGB 0..1).
+
+    There is deliberately no third "ALARM" state. What the alarm has *caught* is the alert (a
+    non-empty event log) and whether something is happening right now is the recording - two other
+    things entirely, shown as their own HUD line and as REC in the corner. Collapsing all three into
+    one red word is what made koala's screen impossible to read: a recognised user could be standing
+    in front of a camera that still said ALARM, with nothing on the screen saying why.
+    """
 
     DISARMED = ("DISARMED", (0.20, 0.85, 0.30))  # green
     ARMED = ("ARMED", (1.00, 0.85, 0.10))  # yellow
-    ALARM = ("ALARM", (1.00, 0.20, 0.20))  # red
 
     def __init__(self, label: str, color: tuple[float, float, float]) -> None:
         self.label = label
@@ -42,6 +48,8 @@ class Overlay:
         self.tracks: list[Track] = []
         self.alarm_state = AlarmState.DISARMED
         self.locked_objects: list[str] = []
+        self.alert_text = ""
+        self.is_recording = False
         self.voice_status = "voice: loading"
         self.cloud_status = "cloud: off"
         self.stream_status = "stream: off"
@@ -58,7 +66,16 @@ class Overlay:
         self.alarm_state = state
 
     def set_locked_objects(self, class_names: list[str]) -> None:
+        """What is guarded, as the watchdog describes it - a missing one arrives as 'laptop (gone)'."""
         self.locked_objects = class_names
+
+    def set_alert(self, text: str) -> None:
+        """The newest thing in the event log, or '' when the log is empty - the alert, in one line."""
+        self.alert_text = text
+
+    def set_recording(self, is_recording: bool) -> None:
+        """Whether the REC mark is up. The watchdog decides; this only draws it (see watchdog.py)."""
+        self.is_recording = is_recording
 
     def set_voice_status(self, status: str) -> None:
         """One short line about the voice stack - it takes ~15 s to load, and silence looks broken."""
@@ -100,8 +117,8 @@ class Overlay:
         """The cairooverlay `draw` callback: paint boxes, the HUD, and the alarm banner if armed-tripped."""
         self._draw_boxes(context)
         self._draw_hud(context)
-        if self.alarm_state is AlarmState.ALARM:
-            self._draw_alarm_banner(context)
+        if self.is_recording:
+            self._draw_recording(context)
         self._draw_countdown(context)
 
     def _draw_boxes(self, context: cairo.Context) -> None:
@@ -140,12 +157,17 @@ class Overlay:
         return f"{tag} {track.class_name} {track.score:.2f}"
 
     def get_hud_lines(self) -> list[tuple[str, tuple[float, float, float]]]:
-        """The HUD as (text, color) pairs, so Cairo and the JPEG snapshot draw the same thing."""
-        yellow, cyan = (1.0, 1.0, 0.0), (0.15, 0.90, 0.90)
+        """The HUD as (text, color) pairs, so Cairo and the JPEG snapshot draw the same thing.
+
+        The `alert` line is always here, even empty: a HUD whose lines move about is one nobody can
+        read at a glance, and "alert: -" is itself the answer to "has anything happened?".
+        """
+        yellow, cyan, red = (1.0, 1.0, 0.0), (0.15, 0.90, 0.90), (1.0, 0.25, 0.25)
         return [
             (self.backend, yellow),
             (f"end-to-end: {_fps(self.end_to_end_ms):5.0f} fps  ({self.end_to_end_ms:4.1f} ms)", yellow),
             (f"alarm: {self.alarm_state.label}", self.alarm_state.color),
+            (f"alert: {self.alert_text or '-'}", red if self.alert_text else yellow),
             (f"locked: {', '.join(self.locked_objects) or '-'}", yellow),
             (self.voice_status, cyan),
             (self.cloud_status, cyan),
@@ -176,15 +198,25 @@ class Overlay:
         x = (self.frame_width - extents.width) / 2 - extents.x_bearing
         _draw_text(context, text, x, self.frame_height - 24, (1.0, 1.0, 1.0))
 
-    def _draw_alarm_banner(self, context: cairo.Context) -> None:
-        """Big centered red 'ALARM' - fires when armed and a person is present but no user recognized."""
+    def _draw_recording(self, context: cairo.Context) -> None:
+        """A red dot and REC in the top-right corner, while the watchdog is uploading screenshots.
+
+        This is the demo's "something is happening" mark - it replaced the big red ALARM banner,
+        which said only that something had happened *at some point* and would not go away.
+
+        Steady rather than blinking: half the frames of a blinking mark have nothing in them, and
+        one of those frames is eventually the screenshot that gets uploaded, which then looks like
+        the mark is broken. The corner is the free one - the HUD is down the left and the countdown
+        is along the bottom.
+        """
         context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        context.set_font_size(72)
-        text = "ALARM"
-        extents = context.text_extents(text)
-        x = (self.frame_width - extents.width) / 2 - extents.x_bearing
-        y = (self.frame_height - extents.height) / 2 - extents.y_bearing
-        _draw_text(context, text, x, y, (1.0, 0.15, 0.15))
+        context.set_font_size(20)
+        red = (1.0, 0.15, 0.15)
+        x = self.frame_width - 66
+        context.set_source_rgb(*red)
+        context.arc(x, 18, 7, 0, 2 * pi)
+        context.fill()
+        _draw_text(context, "REC", x + 12, 25, red)
 
 
 def annotate_frame(frame_rgb, tracks: list[Track], hud_lines=()):

@@ -5,15 +5,21 @@ This is the composition-root pattern: the app takes its collaborators (`registry
 imports `main`, never constructs its own modules, and nothing calls back *into* it except two
 methods:
 
-    on_frame(frame, tracks)   - every camera frame: run the alarm state machine   [video thread]
+    on_frame(frame, tracks)   - every camera frame: watch it, then show it        [video thread]
     on_command(command)       - one parsed command, from voice, the file or C2D   [command thread]
 
 Reading those two methods top to bottom is the whole behaviour of the demo.
 
 **The LLM is a command source, not a decision maker.** `agent` hands a sentence to the 7B model on
 the Ara-240 (`agent.py`), whose tools come back in through `on_command` - so the model can arm the
-alarm, but it never decides *whether* the alarm should go off. That stays where it is below, in
-about fifteen lines of `if`.
+alarm, but it never decides *whether* the alarm should go off. That decision is deterministic code
+in `watchdog.py`, next door.
+
+**Deciding when the alarm has a reason is `watchdog.py`'s job, not this file's.** `on_frame` hands
+it the frame's tracks and then reads three flags back - armed, alert, recording - and paints them.
+The split is by how the code reads: a command is a straight line from a sentence to an answer, and
+the watchdog is a clock-driven state machine. Mixing them was what made koala's alarm hard to
+follow.
 
 **The cloud is not a collaborator here.** `iotc.py` is nowhere in this file. What the dashboard
 needs is *written* into `telemetry.TelemetryState` - a plain dict behind a lock - and the
@@ -30,9 +36,9 @@ matched to a real thing (Marija, laptop); `commands.parse` deliberately does non
 
 **Threading.** `on_command` runs on the command pool, `on_frame` on the video loop. One lock
 serialises commands against each other, so no two handlers mutate the registry at once. `on_frame`
-takes no lock: it only reads, and the values it reads (an armed flag, a list of names) are
-slow-changing enough that seeing one frame's stale value is harmless - the same reasoning
-`face_worker.py` uses.
+takes no lock: what it reads (an armed flag, a list of locked names) is slow-changing enough that
+one frame's stale value is harmless, and what the watchdog writes on that thread is a single
+assignment at a time - the same reasoning `face_worker.py` uses.
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
+from app.watchdog import Watchdog
 from applib import commands, overlay, vocabulary
 from applib.commands import Command, CommandError
 from applib.face_worker import FaceWorker
@@ -58,14 +65,6 @@ from applib.vocabulary import Vocabulary
 if TYPE_CHECKING:  # imported for the type only: agent.py pulls in strands-agents, which may not be there
     from app.agent import AgentService
 
-# How long a sighting still counts for. The tracker reports only tracks seen *this* frame - it
-# deliberately remembers nothing - and YOLO drops a person for the odd frame, so asking "is a person
-# on screen right now" makes the ALARM banner flicker several times a second in an empty room.
-# Remembering the last sighting for a moment fixes it with no state machine to speak of. The real
-# 2s/5s guarded-object timing from GUIDELINES.md is a later pilot; this is only what the banner needs.
-PERSON_MEMORY_S = 1.0
-USER_MEMORY_S = 2.0
-
 # Registration: how long the person is given to look at the camera, and how many goes they get.
 # The first countdown is short because it starts *after* the command was recognised, and the person
 # has been waiting through that already. A rejected look adds a second, on the grounds that
@@ -76,11 +75,12 @@ REGISTER_ATTEMPTS = 3
 
 
 class AntiTheftApp:
-    """Alarm state machine + the command handlers, driven entirely by on_frame / on_command."""
+    """The command handlers + the overlay, driven entirely by on_frame / on_command."""
 
     def __init__(
         self, registry: Registry, overlay: Overlay, face_worker: FaceWorker, state: SessionState,
-        vocab: Vocabulary, telemetry: TelemetryState, scene: SceneDescriber | None = None,
+        watchdog: Watchdog, vocab: Vocabulary, telemetry: TelemetryState,
+        scene: SceneDescriber | None = None,
         capture_path: Path = Path("capture.jpg"), on_restart: Callable[[], None] | None = None,
         get_display_frame: Callable[[], np.ndarray | None] | None = None,
         agent: "AgentService | None" = None,
@@ -90,6 +90,7 @@ class AntiTheftApp:
         self.overlay = overlay
         self.face_worker = face_worker  # registration takes (and judges) its look at a face here
         self.state = state              # armed flag + locked objects, persisted across restarts
+        self.watchdog = watchdog        # decides when the alarm has a reason; this file only shows it
         self.vocabulary = vocab         # turns what was heard into a name or a YOLO class
         self.telemetry = telemetry      # written here, read by the /IOTCONNECT publisher thread
         self.scene = scene              # None when the VLM is unavailable
@@ -99,13 +100,12 @@ class AntiTheftApp:
         self.agent = agent              # the LLM on the Ara-240; None when it is off or unreachable
         self.upload_capture = upload_capture  # the cloud's uploader; None when there is no cloud
         self.alarm_state = AlarmState.ARMED if state.is_armed else AlarmState.DISARMED
+        self.reported_alarm = self.alarm_state.label.lower()  # the cloud's rollup; see _set_state
         # _set_state only speaks up on a *change*, so the state we booted into has to be published
         # here - otherwise a demo that is left disarmed never reports an alarm value at all.
-        self.telemetry.set(alarm=self.alarm_state.label.lower(), objects="none")
+        self.telemetry.set(alarm=self.reported_alarm, objects="none")
         self._last_tracks: list[Track] = []
         self._last_frame: np.ndarray | None = None
-        self._person_seen_at = float("-inf")
-        self._user_seen_at = float("-inf")
         self._lock = Lock()
 
         self._handlers = {
@@ -114,6 +114,8 @@ class AntiTheftApp:
             commands.UNREGISTER_LAST: self._unregister_last,
             commands.ARM: self._arm,
             commands.DISARM: self._disarm,
+            commands.CLEAR_ALERT: self._clear_alert,
+            commands.DESCRIBE_ALERT: self._describe_alert,
             commands.LOCK_OBJECT: self._lock_object,
             commands.UNLOCK_OBJECT: self._unlock_object,
             commands.DESCRIBE_SCENE: self._describe_scene,
@@ -125,25 +127,23 @@ class AntiTheftApp:
     # --- the two event methods ----------------------------------------------------------------
 
     def on_frame(self, frame: np.ndarray, tracks: list[Track]) -> None:
-        """Each frame: decide the alarm state from who is on screen, then update the overlay."""
+        """Each frame: let the watchdog look at it, then show what it made of it.
+
+        The three flags stay three things on the screen. `alarm:` is the switch and nothing else -
+        armed or disarmed, never "ALARM". What the demo has *caught* is the `alert:` line, and
+        whether something is happening right now is REC in the corner. An alert can be up with the
+        alarm disarmed, because a locked object is watched either way.
+        """
         self._last_frame = frame
         self._last_tracks = tracks
-        now = monotonic()
-        if self.registry.is_person_present(tracks):
-            self._person_seen_at = now
-        if self.registry.is_registered_user_present(tracks):
-            self._user_seen_at = now
+        self.watchdog.on_frame(monotonic(), tracks)
 
-        if self.state.is_armed:
-            is_person_recent = now - self._person_seen_at < PERSON_MEMORY_S
-            is_user_recent = now - self._user_seen_at < USER_MEMORY_S
-            self._set_state(AlarmState.ALARM if is_person_recent and not is_user_recent
-                            else AlarmState.ARMED)
-        else:
-            self._set_state(AlarmState.DISARMED)
+        self._set_state()
         self.overlay.set_tracks(tracks)
         self.overlay.set_alarm_state(self.alarm_state)
-        self.overlay.set_locked_objects(self.state.locked_objects)
+        self.overlay.set_alert(self.watchdog.describe_alert())
+        self.overlay.set_locked_objects(self.watchdog.describe_locks())
+        self.overlay.set_recording(self.watchdog.is_recording)
         # Written every frame rather than on change: it is a dict update under a lock, cheaper than
         # working out whether the answer moved. Nothing is sent until the publisher's next tick.
         self.telemetry.set(objects=describe_visible(tracks))
@@ -240,23 +240,79 @@ class AntiTheftApp:
         if self.state.is_armed:
             return "The alarm is already armed."
         self.state.set_armed(True)
+        self.watchdog.arm()  # the person who just said it gets the full grace, not what is left of it
+        self._set_state()
         return "Alarm armed."
 
     def _disarm(self, command: Command) -> str:
-        if not self.state.is_armed:
-            return "The alarm is already disarmed."
+        """Disarm, and clear whatever the watchdog is holding - the demo's big reset.
+
+        Disarming an already-disarmed alarm is not a mistake to be corrected: a locked object is
+        watched whether or not the alarm is armed, so an alert can be up with the alarm off. Say
+        `clear the alert` for the narrow version, which leaves the locks anchored where they are.
+        """
+        was_armed = self.state.is_armed
+        if self.watchdog.is_alert:
+            self._publish_log(self.watchdog.get_log())  # disarming destroys it too - send it first
         self.state.set_armed(False)
-        self._set_state(AlarmState.DISARMED)  # do not wait for the next frame to clear the banner
+        is_cleared = self.watchdog.disarm()
+        self._set_state()  # do not wait for the next frame to update the HUD and the cloud
+        if is_cleared:
+            return "Alarm disarmed, and the alert is cleared."
+        if not was_armed:
+            return "The alarm is already disarmed."
         return "Alarm disarmed."
 
+    def _describe_alert(self, command: Command) -> str:
+        """Read the event log back: what happened, in order, with ages rather than timestamps.
+
+        The whole log goes to the cloud as `answer` as well as being returned. It has to: several
+        events in plain English is far more than a C2D acknowledgement can carry (the dashboard
+        renders one as a tooltip), so the ack is the first line of it and this is the rest.
+        """
+        return self._publish_log(self.watchdog.get_log())
+
+    def _clear_alert(self, command: Command) -> str:
+        """Empty the event log, and with it the alert. The acknowledgement, without disarming.
+
+        Its own command because the alarm and the alert are different things: the alarm is the
+        switch the user throws, the alert is what the demo has caught. Before this existed, an alert
+        raised by a locked object - which is watched whether or not the alarm is armed - could only
+        be cleared by saying "disarm", which is a strange thing to say about an alarm that was never
+        armed.
+
+        **The log is published before it is destroyed**, whichever way the clearing was asked for -
+        voice, dashboard, or the LLM deciding to call the tool. It only ever existed in RAM, so
+        clearing without sending it is the one way to lose it for good.
+        """
+        if not self.watchdog.is_alert:
+            return "There is nothing to clear."
+        self._publish_log(self.watchdog.get_log())
+        self.watchdog.clear_alert()
+        return "Alert cleared."
+
+    def _publish_log(self, description: str) -> str:
+        """Send a copy of the event log to the cloud as `answer`, and hand it back to say aloud.
+
+        `set_once` queues rather than overwrites (see telemetry.py), which is what makes this safe
+        when the *LLM* is the one clearing the alert: the log goes out, and the model's own reply
+        follows it in the next message instead of replacing it.
+        """
+        self.telemetry.set_once(answer=description)
+        return description
+
     def _lock_object(self, command: Command) -> str:
-        """TODO(pilot): a stub. It proves the object can be *named and found*; the 2s/5s theft
-        timing that makes a locked object actually trigger the alarm is the next pilot's slice.
+        """Guard an object, anchored to the box it is standing in right now.
+
+        Locking it again is not refused - it is how somebody says "it lives *here* now" after the
+        thing has been moved, and re-locking is one of the three ways to clear a disturbed lock
+        (the others are unlocking and disarming). See `watchdog.py` and `guard.py`.
         """
         class_name = self._resolve_visible_object(command.argument, command.is_exact)
-        if not self.state.lock_object(class_name):
-            raise CommandError(f"The {class_name} is already locked.")
-        return f"The {class_name} is locked. I am watching it."
+        anchor = largest_box(self._last_tracks, class_name)
+        if self.watchdog.lock(class_name, anchor):
+            return f"The {class_name} is locked. I am watching it."
+        return f"The {class_name} is locked again, where it is now."
 
     def _unlock_object(self, command: Command) -> str:
         """Unlocking matches against what is *locked*, not what is visible - you must be able to
@@ -271,7 +327,7 @@ class AntiTheftApp:
         if class_name is None:
             raise CommandError(f"I do not have a {heard or 'thing'} locked. "
                                f"Locked right now: {', '.join(locked)}.")
-        self.state.unlock_object(class_name)
+        self.watchdog.unlock(class_name)
         return f"The {class_name} is unlocked."
 
     def _snapshot(self, command: Command) -> str:
@@ -384,10 +440,11 @@ class AntiTheftApp:
         Prose rather than JSON: it goes into a 4096-token prompt shared with the tool schemas and
         the answer, and the model reads a sentence at least as well as a dict.
         """
-        return (f"The alarm is {self.alarm_state.label.lower()}. "
+        return (f"The alarm is {'armed' if self.state.is_armed else 'disarmed'}. "
                 f"Registered users: {', '.join(self.registry.user_names) or 'none'}. "
-                f"Guarded objects: {', '.join(self.state.locked_objects) or 'none'}. "
-                f"The camera can see: {describe_visible(self._last_tracks)}.")
+                f"Guarded objects: {', '.join(self.watchdog.describe_locks()) or 'none'}. "
+                f"The camera can see: {describe_visible(self._last_tracks)}. "
+                f"{self.watchdog.get_status()}")
 
     # --- matching an argument to what exists ----------------------------------------------------
     # Two rules, chosen by `command.is_exact` - the contract the *source* offered (commands.py).
@@ -453,17 +510,26 @@ class AntiTheftApp:
         print(f"[app] {heard!r} -> visible object {class_name}")
         return class_name
 
-    def _set_state(self, new_state: AlarmState) -> None:
+    def _set_state(self) -> None:
         """The single place alarm state changes - so every transition has one spot that announces it.
 
-        And exactly one spot that tells the cloud. `wake()` rather than waiting for the 4-second
-        tick: an alarm that shows up in the dashboard three seconds late is a different demo.
+        Two audiences, one decision. **The screen** gets the switch and only the switch: ARMED or
+        DISARMED, because what is happening *now* is REC in the corner and what has happened is the
+        alert line. **The cloud** gets a rollup in the same `alarm` attribute it always had -
+        `disarmed` / `armed` / `alarm` - where `alarm` means the same thing REC does: something is
+        going on this minute. A dashboard is not sitting next to the screen and has room for one
+        word, so that word is the interesting one.
+
+        `wake()` rather than waiting for the 4-second tick: an alarm that reaches the dashboard three
+        seconds late is a different demo.
         """
-        if new_state is self.alarm_state:
+        state = AlarmState.ARMED if self.state.is_armed else AlarmState.DISARMED
+        reported = "alarm" if self.watchdog.is_recording else state.label.lower()
+        if state is self.alarm_state and reported == self.reported_alarm:
             return
-        self.alarm_state = new_state
-        print(f"[app] alarm state -> {new_state.label}")
-        self.telemetry.set(alarm=new_state.label.lower())
+        self.alarm_state, self.reported_alarm = state, reported
+        print(f"[app] alarm state -> {reported}")
+        self.telemetry.set(alarm=reported)
         self.telemetry.wake()
 
 
@@ -475,6 +541,16 @@ def match_exactly(given: str, candidates: list[str]) -> str | None:
     """
     given = given.strip().lower()
     return next((candidate for candidate in candidates if candidate.lower() == given), None)
+
+
+def largest_box(tracks: list[Track], class_name: str) -> list[int] | None:
+    """The biggest box of that class on screen - the one being pointed at when somebody says "lock".
+
+    None when there is nothing to anchor to, which the guard reads as "anchor it the first time you
+    see it" rather than as an error.
+    """
+    boxes = [track.box for track in tracks if track.class_name == class_name]
+    return max(boxes, key=lambda box: (box[2] - box[0]) * (box[3] - box[1])) if boxes else None
 
 
 def describe_visible(tracks: list[Track]) -> str:

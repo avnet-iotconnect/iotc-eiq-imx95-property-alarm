@@ -14,8 +14,9 @@ What flows each way:
 
     D2C   every 4 s (`TELEMETRY_INTERVAL_S`), or at once when something asks: sdk_version,
           version, fps, alarm, objects, `scene` when someone asked the VLM a question, and
-          `answer` when someone asked the LLM one
-    C2D   the ten commands in the alrmtheft device template, mapped to our verbs by `C2D_VERBS`;
+          `answer` when someone asked the LLM one - or when the event log was read out or cleared,
+          because clearing destroys it and it only ever existed in RAM
+    C2D   the twelve commands in the alrmtheft device template, mapped to our verbs by `C2D_VERBS`;
           every one is acknowledged with the same sentence the demo would have spoken
     S3    `upload_capture()` puts capture.jpg in the bucket; /IOTCONNECT timestamps each version.
           The snapshot *handler* calls it, through a callable `main.py` handed the app - so saving
@@ -80,6 +81,8 @@ C2D_VERBS = {
     "object-unlock": commands.UNLOCK_OBJECT,
     "alarm-arm": commands.ARM,
     "alarm-disarm": commands.DISARM,
+    "alert-clear": commands.CLEAR_ALERT,
+    "alert-describe": commands.DESCRIBE_ALERT,
     "scene": commands.DESCRIBE_SCENE,
     "snapshot": commands.SNAPSHOT,
     "restart": commands.RESTART,
@@ -300,10 +303,11 @@ class IotcClient:
             is_ok, text = result.is_ok, result.message
             if is_ok and verb == commands.DESCRIBE_SCENE:
                 text = "Scene described."  # the description itself went out as the scene attribute
-            elif is_ok and verb == commands.AGENT:
+            elif is_ok and verb in (commands.AGENT, commands.DESCRIBE_ALERT, commands.CLEAR_ALERT):
                 # The beginning of the answer, not a stand-in for it: a tooltip saying "Answered."
                 # leaves the dashboard unable to tell one reply from another. The whole thing went
-                # out as the `answer` attribute a moment ago.
+                # out as the `answer` attribute a moment ago - which is also why `alert-describe`
+                # is here: an event log in prose is several sentences, and a tooltip is one.
                 text = shorten(text, MAX_AGENT_ACK_CHARS)
         except Exception as error:
             logger.exception("c2d %s failed", verb)

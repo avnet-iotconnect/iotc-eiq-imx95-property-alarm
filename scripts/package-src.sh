@@ -3,8 +3,9 @@
 #
 #   bash scripts/package-src.sh        ->  iotc-property-alarm-src.tgz in the repo root
 #
-# Members are relative to koala/, so unpacking it IS the deployment: the user makes a directory on
-# the board, unpacks there and runs ./install.sh. Rename it to *-v<x.y.z>.tgz before uploading.
+# Run it from the pilot directory (lion/). Members are relative to that, so unpacking the tarball IS
+# the deployment: the user makes a directory on the board, unpacks there and runs ./install.sh.
+# Rename it to *-v<x.y.z>.tgz before uploading.
 #
 # Excluded: everything the board builds or the owner supplies -- the two venvs, NXP's payload,
 # the connector's downloaded source, the models (their own tarball), and anything holding a

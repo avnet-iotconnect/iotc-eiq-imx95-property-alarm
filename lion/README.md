@@ -32,9 +32,9 @@ Three things are worth saying up front, because they are the design:
 - **The model is in another process, on another chip.** `connector/` is NXP's eIQ AAF Connector,
   installed on the board with its own venv, keeping the 7B resident on the Ara-240 behind an
   OpenAI-shaped REST endpoint. koala needs `strands-agents` and `openai` and no ML packages at all.
-- **The model does not decide anything.** It picks tools; `app/app.py` still decides when the alarm
-  goes off, in about fifteen lines of `if`. A model that hallucinates a theft is a worse demo than
-  no model.
+- **The model does not decide anything.** It picks tools; `app/watchdog.py` still decides when the
+  alarm goes off, in deterministic code. A model that hallucinates a theft is a worse demo than no
+  model.
 - **The tools *are* the command handlers.** `disarm_alarm` runs the same code the dashboard button
   and the spoken phrase run, gets the same refusals, and cannot do anything they could not.
 
@@ -52,8 +52,10 @@ Say **"Hey NXP"**, wait for the blip, then you have **3 seconds to start talking
 | `unregister user Michael` | forgets him, and the label disappears at once | I do not know anyone called Michael |
 | `unregister last user` | undo for a registration that bound the wrong face | there are no registered users |
 | `arm` / `arm the alarm` | arms the alarm | (never fails) |
-| `disarm` / `disarm the alarm` | disarms it; the HUD says DISARMED in green | (never fails) |
-| `lock the laptop` | **stub**: finds a laptop on screen and marks it guarded | I cannot see a laptop |
+| `disarm` / `disarm the alarm` | disarms it, and clears everything the watchdog holds | (never fails) |
+| `what happened` / `describe the alert` | reads the event log out loud | (never fails) |
+| `clear the alert` | empties the log — the acknowledgement, without disarming | (never fails) |
+| `lock the laptop` | guards it, anchored to where it is standing right now | I cannot see a laptop |
 | `unlock the laptop` | releases it | the laptop is not locked |
 | `describe the scene` | sends the frame, boxes and all, to SmolVLM and reads out the answer | no camera frame yet |
 | `take a snapshot` | writes `capture.jpg` — the frame with boxes and HUD | no camera frame yet |
@@ -62,9 +64,10 @@ Every one of those answers is spoken. So is the transcript, before the answer �
 recogniser thought you said, which is the difference between debugging in five seconds and in five
 minutes. `--no-repeat` turns that off once the booth is running.
 
-`lock` / `unlock` are deliberately stubs: they prove an object can be *named and found* on screen,
-which is the hard part of the voice slice. The 2s/5s theft timing that makes a locked object
-actually trip the alarm is the next pilot.
+Locking is its own switch: a locked object is watched whether or not the alarm is armed, because
+locking a laptop is already an explicit act and should not also require remembering to arm. Saying
+`lock the laptop` again is not a mistake — it is how you say "it lives *here* now" after something
+has been moved. See **Alarm** below.
 
 ## Registering a face
 
@@ -131,7 +134,8 @@ diagnostics nobody runs at a booth, and is expected to be thrown away before thi
 | File | Role | Future module |
 |---|---|---|
 | `main.py` | composition root + the 30 fps frame loop + the argument surface | main |
-| **`app/app.py`** | `AntiTheftApp`: alarm state machine + every command handler | app |
+| **`app/app.py`** | `AntiTheftApp`: every command handler, and what the overlay is told | app |
+| **`app/watchdog.py`** | arming, alert and recording: when the alarm has a reason | app |
 | **`app/agent.py`** | the LLM's tools, its prompt, and one question at a time | app |
 | `applib/commands.py` | sentence → `Command`, and the 4-thread pool that runs it | app |
 | `applib/voice.py` | wake word → blip → VAD capture → transcript → spoken reply | audiotext |
@@ -141,7 +145,9 @@ diagnostics nobody runs at a booth, and is expected to be thrown away before thi
 | `applib/webrtc.py` | KVS signalling, one peer per viewer, H.264 pass-through | iotconnect |
 | `applib/telemetry.py` | what the cloud should know, written by anyone, read by the publisher | iotconnect |
 | `applib/scene.py` | `describe scene`: annotated frame → SmolVLM → a sentence | vlm |
-| `applib/state.py` | armed flag + locked objects, persisted across a restart | db |
+| `applib/state.py` | armed flag + locked objects and their anchors, persisted across a restart | db |
+| `applib/guard.py` | has a locked object moved, or gone? Anchors, debounce, re-anchoring | db |
+| `applib/eventlog.py` | the first and most recent event of each kind, read back as prose | db |
 | `applib/registry.py` | face database (name ↔ embedding), presence queries | db |
 | `applib/face_worker.py` | face recognition off the frame loop, ~5 Hz | db/ml |
 | `applib/face.py` | YuNet detect + align + SFace embed on person crops | ml/face |
@@ -212,9 +218,9 @@ of the answer — enough to tell one reply from another — and the whole text i
 `answer` attribute. Voice has no such limit: if `agent` is ever wired to the microphone, the entire
 answer is what gets spoken.
 
-Nine tools are offered: `get_time`, `get_status`, `take_screenshot`, `arm_alarm`, `disarm_alarm`,
-`register_user`, `unregister_user`, `lock_object`, `unlock_object`. Adding a tenth is a docstring
-and a one-line call in `app/agent.py` — but read the limits first:
+Eleven tools are offered: `get_time`, `get_status`, `take_screenshot`, `arm_alarm`, `disarm_alarm`,
+`clear_alert`, `describe_alert`, `register_user`, `unregister_user`, `lock_object`, `unlock_object`.
+Adding a twelfth is a docstring and a one-line call in `app/agent.py` — but read the limits first:
 
 - **4096 tokens total, prompt plus generation**, compiled into the model; the Ara's 16 GB holds
   weights, not context. Every tool schema is part of *every* prompt, and nine of them cost roughly
@@ -268,12 +274,21 @@ Every 4 seconds, and immediately whenever the alarm state changes:
 | `objects` | `Nick, person, laptop` | the tracker, names filled in by face recognition |
 | `fps` | `27.4` | the frame loop, twice a second |
 | `scene` | the VLM's answer | **once**, after a `scene` command — not repeated afterwards |
-| `answer` | the LLM's answer, in full | **once**, after an `agent` command — this is where to read it |
+| `answer` | the LLM's answer, or the event log | **once** — after `agent`, `alert-describe`, or *any* clearing of the log |
 | `version`, `sdk_version` | `1.0.0`, `1.3.0` | constants |
+
+`alarm` is the one word a dashboard has room for, so it is a **rollup**, and its `alarm` value means
+what REC means on the screen: something is happening this minute. The screen itself never says
+ALARM — it has room to show the switch, the alert line and REC separately.
 
 A one-shot attribute is **left out of every other packet**, not sent as `null`: the back end treats
 an absent field and a null one differently, and "nobody asked a question this tick" is the absent
 case. `telemetry.collect()` is where that is dropped.
+
+One-shots **queue** rather than overwrite. Two can be produced inside one publishing interval — ask
+the LLM to clear the alert and the handler publishes the event log (which is about to be destroyed)
+just before the model's own reply arrives — and both matter, so they go out in order, one per
+message. `telemetry.set_once` is the queue.
 
 ### What comes in
 
@@ -283,6 +298,8 @@ case. `telemetry.collect()` is where that is dropped.
 | `user-unregister` | a name | `Unregistered Nick.` / who is actually known |
 | `object-lock`, `object-unlock` | a YOLO class name | `The laptop is locked.` / what is visible |
 | `alarm-arm`, `alarm-disarm` | — | `Alarm armed.` |
+| `alert-clear` | — | `Alert cleared.` — the log goes to `answer` first, because this destroys it |
+| `alert-describe` | — | the first 60 characters; the whole log goes to the `answer` attribute |
 | `scene` | optional question | `Scene described.` — the text itself goes to the `scene` attribute |
 | `snapshot` | — | `Snapshot uploaded.` (S3) or the reason it was not |
 | `restart` | — | `Restarting.`, then the process comes back three seconds later |
@@ -412,13 +429,66 @@ SFace offload is what buys the voice stack its CPU.
 
 ## Alarm
 
-Starts **disarmed** (and stays however you left it — see below). Armed + a person on screen + nobody
-recognised ⇒ **ALARM**, big red banner. A recognised user drops it back to armed, yellow.
+Three flags, not one state — `app/watchdog.py`, and it is worth reading:
+
+| flag | what it means | on screen |
+|---|---|---|
+| **arming** | your own switch, and *only* that. Persisted, so an hourly restart comes back armed if you left it armed | `alarm: ARMED` |
+| **alert** | the event log is not empty. There is no second flag — an alert *is* a log with something in it | `alert: the laptop was moved, 30 seconds ago` |
+| **recording** | a *timed* flag: a screenshot to the cloud every 3 s, lasting 5 s past whatever last refreshed it | **REC** in the corner |
+
+**There is no ALARM banner.** *Alarm* is an input — the switch you arm and disarm — and conflating
+it with what the demo has caught is what made the old screen unreadable: a recognised user could
+stand in front of a camera that still said ALARM, with nothing on screen saying why. REC does that
+job now, and it is honest about tense: REC means *happening*, the alert line means *happened*.
+
+The cloud still gets one rolled-up `alarm` value (`disarmed` / `armed` / `alarm`), because a
+dashboard tile has room for one word — and there, `alarm` means the same thing REC does.
+
+It **ships disarmed** and stays however you left it. Disarming is not "off": a locked object is still
+watched. It means *people are nobody's business* — the demo stops caring who is in the room. Arming
+is what you do on the way out, and it adds the room to what is guarded.
+
+**An unknown person is fine as long as a known one is there** — armed or disarmed, and whether the
+stranger is standing next to them or picking the laptop up. One rule, one window (`USER_GRACE_S`,
+5 s), and it is what makes a booth workable: the visitors are strangers, the person showing them
+round is not.
+
+Three things raise an alert, and each starts a recording, adds one line to the event log and
+uploads the screenshot that goes with it:
+
+- an **unrecognised person** in view while armed, for 3 seconds. The grace is for the face
+  recogniser — it needs a moment and a look at a face before it can say "that is Nick". While they
+  stay, the recording keeps being refreshed, so a visitor who lingers is photographed throughout;
+- a **locked object moved** by nobody the camera recognises;
+- a **locked object gone** from view for 2 seconds. What went missing is remembered by name, because
+  once it is gone there is nothing on screen left to point at.
+
+A locked object is an **anchor**: the box it occupied when you locked it, kept in `state.json`. It
+counts as moved when its centre drifts more than half the object's own size — fractions of the
+object, so one threshold fits a laptop and a phone — and only if that holds for half a second, since
+YOLO reacquires a box in odd places for a frame at a time. **Who moved it decides what happens.**
+With a registered user on screen (or seen in the last 5 s) the anchor simply follows the object,
+silently. With nobody recognised, it is an event — and then the anchor moves anyway, because the
+object is not going back by itself and an anchor it can never satisfy again would fire on every
+frame for the rest of the day. Keep carrying it and it reports again every few seconds.
+
+**Two ways to clear it.** `clear the alert` empties the log and nothing else — the acknowledgement,
+for when you have read what happened and want the screen back. **Disarming** is the bigger reset: the
+log, the recording, and every locked object re-anchored where it now stands. Disarming works when the
+alarm is already disarmed, because a locked object raises an alert either way.
+
+The event log keeps the **first and the most recent event of each kind**. Not the two most recent —
+the *first* is the one that cannot be recovered later, and "the laptop has been moved, and it started
+four minutes ago" is a different fact from "the laptop was moved a second ago". `what happened` reads
+it back, with ages rather than timestamps, and so does `agent what has happened?`.
+
+The log lives **only in RAM**, so anything that destroys it — `clear the alert`, `disarm`, or the LLM
+calling the `clear_alert` tool — publishes a copy to the cloud as `answer` first.
 
 A sighting counts for a moment after it happens — a person for 1 s, a recognised user for 2 s. The
 tracker reports only what it saw *this* frame, and YOLO drops a person for the odd frame, so without
-that the banner flickers several times a second. The real 2s/5s guarded-object timing is the next
-pilot; this is only what the banner needs.
+that an empty room flickers several times a second.
 
 ## What survives a restart
 
@@ -502,7 +572,8 @@ koala/
 ├── main.py                 composition root: builds everything, wires everything
 ├── install.sh  run.sh      the two hooks, board-side
 ├── app/                    what the demo does — the owner's domain
-│   ├── app.py              alarm state machine + every command handler
+│   ├── app.py              every command handler, and what the overlay is told
+│   ├── watchdog.py         arming, alert, recording — when the alarm has a reason
 │   └── agent.py            the LLM's tools and prompt
 ├── applib/                 how it does it — cameras, models, faces, audio, cloud, WebRTC
 ├── config/                 audio.json, vocabulary.json

@@ -119,7 +119,8 @@ cd ~/pa/connector && ./install.sh && ./run.sh
 Ara-240 firmware above are prerequisites. In the finished project this section becomes "wget a
 tarball and unpack it".
 
-# Troubleshooting
+
+# FAQ/Troubleshooting
 
 - If a demo abruptly power cycles the board, the most likely issue is power delivery.
 Plug the board into a high power USB port, using the cable supplied with the board or 
@@ -128,4 +129,10 @@ to be 100% sure, plug in a phone USB charger cable into the power USB-C port.
 - The USB camera may appear as /dev/video4 or /dev/video52 etc. when plugged in.
 The best solution is power the board (power button or re-plug USB power)
 **while the USB camera is plugged in**. If a board is running, issue a `poweroff` to cleanly shutdown. 
+
+- FPS is lower at times:
+
+Teh FPS fluctuation on the screen is normal as we periodically read faces on the screen (every Nth frame). Additionally, for the first minute or so, loading the models will consume more system resourrces and slow FPS down.
+
+Depending on the camera, in low lighting conditions camera exposure may affect FPS. Camera may keep the shutter open for longer in order to absorb more light.
 

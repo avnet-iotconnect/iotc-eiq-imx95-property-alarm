@@ -28,7 +28,7 @@ Say "Hey NXP", wait for the blip, then one of:
 The layout, and the rule is one-way -- main.py -> app/ -> applib/ (see README.md):
 
     main.py       this file: the composition root, and the only place anything is wired
-    app/          what the demo *does* - the state machine and the LLM's tools. Read this.
+    app/          what the demo *does* - the commands, the watchdog, the LLM's tools. Read this.
     applib/       how it does it: camera, models, faces, audio, cloud, WebRTC
     connector/    NXP's eIQ AAF Connector, in its own venv - the LLM's home. Installed separately.
     config/       audio.json, vocabulary.json
@@ -76,12 +76,15 @@ sys.path.insert(0, str(PAYLOAD / "src"))
 from app import agent  # noqa: E402
 from app.agent import AgentService  # noqa: E402
 from app.app import AntiTheftApp  # noqa: E402
-from applib import audio_devices, camera_devices, iotc, neutron, vocabulary, webrtc  # noqa: E402
+from app.watchdog import Watchdog  # noqa: E402
+from applib import audio_devices, camera_devices, commands, iotc, neutron, vocabulary, webrtc  # noqa: E402
 from applib.camera import Camera  # noqa: E402
-from applib.commands import CommandService  # noqa: E402
+from applib.commands import Command, CommandService  # noqa: E402
 from applib.detector import Detector  # noqa: E402
+from applib.eventlog import EventLog  # noqa: E402
 from applib.face import FaceRecognizer  # noqa: E402
 from applib.face_worker import FaceWorker  # noqa: E402
+from applib.guard import ObjectGuard  # noqa: E402
 from applib.iotc import IotcClient  # noqa: E402
 from applib.overlay import Overlay  # noqa: E402
 from applib.registry import Registry  # noqa: E402
@@ -335,6 +338,10 @@ def main() -> None:
     tracker = Tracker()
     overlay = Overlay(args.width, args.height, backend="NPU" if use_neutron else "CPU")
     state = SessionState(args.state)
+    # The watchdog is the alarm's memory: what has happened (the event log) and what has been
+    # disturbed (the object guard, which owns the locked objects' anchors). `app.py` reads three
+    # flags off it every frame and never the other way round.
+    watchdog = Watchdog(registry, state, ObjectGuard(state), EventLog())
     vocab = vocabulary.load_vocabulary()
     telemetry = TelemetryState()
     scene = None if args.no_vlm else SceneDescriber(
@@ -362,7 +369,7 @@ def main() -> None:
         overlay.set_stream_status("stream: off")
         if not webrtc.IS_WEBRTC_AVAILABLE and not args.no_webrtc:
             print("WebRTC    : disabled (aiortc is not installed)")
-    app = AntiTheftApp(registry, overlay, face_worker, state, vocab, telemetry, scene,
+    app = AntiTheftApp(registry, overlay, face_worker, state, watchdog, vocab, telemetry, scene,
                        Path(args.capture), on_restart=request_restart,
                        get_display_frame=camera.read_display)
     # The first of two back-edges in the object graph, and the reason it exists is worth a line: the
@@ -370,6 +377,11 @@ def main() -> None:
     # them. (The second is `set_upload_capture` below, for the same kind of reason.)
     app.set_agent(build_agent(args, app, overlay))
     service = CommandService(app.on_command, max_workers=args.command_threads)
+    # A recording's screenshots are ordinary `snapshot` commands, submitted from the video loop and
+    # run on a command worker - so the ~100 KB upload never touches the frame loop, and a picture
+    # the watchdog took is the same thing as one anybody else asked for.
+    watchdog.set_capture(lambda: service.submit_command(
+        Command(commands.SNAPSHOT, text="recording"), source="watchdog"))
     text_commands = TextCommandFile(args.text_commands) if args.text_commands else None
     if args.restart_after > 0:
         print(f"Restart    : automatically after {args.restart_after:.0f} minutes")
