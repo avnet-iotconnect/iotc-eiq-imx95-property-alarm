@@ -25,3 +25,7 @@
 dm-eiq-genai-flow-demonstrator/
 *.tgz
 *.zip
+
+# OCR feasibility probe: throwaway venv and downloaded opencv_zoo models (291 MB)
+/mamba/.venv-ocr/
+/mamba/agenttools/ocr-models/
