@@ -189,6 +189,14 @@ class AntiTheftApp:
         like, so a new person scoring high against an old one is a mix-up caught in the act. No
         threshold here can catch that - it is the embedder failing, not the pose.
 
+        **The same face is never left in the database twice.** When the look that was just stored
+        scores above the match threshold against somebody already registered - which is to say, when
+        the demo would have put that person's name on this face anyway - the older name is dropped
+        rather than the new one refused. It is the same person either way, and the name they have
+        just given is the one they meant: the case this exists for is a registration the recogniser
+        mis-heard ("Michel"), which the visitor fixes by simply saying it again. Two entries for one
+        face would leave which label appears a coin-toss between two vectors of the same person.
+
         This runs on a command thread with the command lock held, so the demo takes no other command
         for the up-to-nine seconds it can last. The video loop is untouched - it takes no lock - so
         the picture, the alarm and the stream all carry on at 30 fps while the count runs.
@@ -205,10 +213,45 @@ class AntiTheftApp:
             print(f"[app] register {name!r} {attempt + 1}/{REGISTER_ATTEMPTS}: {result.report}  "
                   f"nearest {result.nearest}  ->  {result.problem or 'registered'}")
             if result.is_registered:
+                answer = f"Registered {name}."
+                if result.duplicate is not None:
+                    self.registry.unregister_user(result.duplicate)
+                    self.face_worker.forget_user(result.duplicate)
+                    print(f"[app] {name!r} is the same face as {result.duplicate!r} "
+                          f"({result.nearest}) - dropped the older name")
+                    answer = f"Registered {name}, replacing {result.duplicate}."
                 print(f"[app] registered {name!r} (now knows: {', '.join(self.registry.user_names)})")
-                return f"Registered {name}."
+                self._capture_registration(name)
+                return answer
             problem = result.problem
         raise CommandError(f"{problem}. I did not get a good enough look to register {name}.")
+
+    def _capture_registration(self, name: str) -> None:
+        """Send a picture of whoever was just registered to the cloud, and never fail over it.
+
+        A booth wants to be able to look back at who was let into the database and what they looked
+        like at the time, and this is the one moment the demo knows a face is in front of the camera
+        and looking at it - the countdown just made sure of that. It is an ordinary `snapshot`: the
+        same composed frame, to the same `capture.jpg`, uploaded the same way, so nothing new
+        reaches S3 and /IOTCONNECT timestamps this one like any other.
+
+        The upload is on the command thread with the lock still held, as it is for a snapshot
+        anybody asked for. It runs *after* the face was stored, so a cloud that is down, disabled or
+        slow costs a picture and nothing else - which is why the `CommandError` is swallowed here
+        rather than turning a registration that worked into one that reports failure.
+
+        **It calls the handler, not `CommandService`, and that is load-bearing for the screen.** A
+        submitted command announces its own result, so the visitor would read "Registered Michael."
+        and then watch it be replaced by "Snapshot uploaded." - which says nothing they asked about
+        and buries the one answer they were waiting for. One command, one message: the picture is
+        part of registering, not a second thing that happened. `main.show_action` never sees this,
+        because nothing here goes through the hook it is wired to.
+        """
+        try:
+            answer = self._snapshot(Command(commands.SNAPSHOT, text=f"registered {name}"))
+        except CommandError as error:
+            answer = f"no picture ({error})"
+        print(f"[app] registration snapshot for {name}: {answer}")
 
     def _count_down(self, message: str, seconds: float) -> None:
         """Put a message and a ticking number on the screen, and wait for it to run out.

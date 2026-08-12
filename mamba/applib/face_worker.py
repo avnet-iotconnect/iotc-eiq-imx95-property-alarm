@@ -47,6 +47,7 @@ class Registration:
     problem: str | None
     report: str = "no face"
     nearest: str = "-"  # the registered user this face is most like: the mix-up, made visible
+    duplicate: str | None = None  # ... and that user's name when the demo would call this face them
 
     @property
     def is_registered(self) -> bool:
@@ -106,6 +107,13 @@ class FaceWorker:
         Nothing is written when the look is not good enough. The caller counts down again and asks
         for another one - see `face.find_quality_problem` for what "good enough" means and why the
         gate is here rather than at match time.
+
+        `duplicate` is measured here and acted on in `app.py`: it names the already-registered user
+        this face scores *above the match threshold* against, which is to say the person the demo
+        would put a label on if they walked into shot. Registering that face under a second name is
+        how one person ends up in the database twice, and after that which name appears is a
+        coin-toss between two vectors of the same face. This file only reports it - what to do about
+        it is the owner's decision, and it is in `app._register_user`.
         """
         with self._lock:
             candidates = [t for t in tracks if t.class_name == "person" and t.track_id in self._samples]
@@ -122,12 +130,15 @@ class FaceWorker:
             report = f"{sample.describe()}  steady {consistency:.2f}"
             near_name, near_score = self.registry.find_nearest_user(sample.embedding)
             nearest = f"{near_name} {near_score:.2f}" if near_name else "nobody registered yet"
+            # The caller has already refused a name that is registered, so this can only be somebody
+            # else's name - the same face wearing two of them.
+            is_duplicate = near_score is not None and near_score >= self.registry.match_threshold
             problem = find_quality_problem(sample, consistency)
             if problem is not None:
                 return Registration(problem, report, nearest)
             self.registry.register_user(name, sample.embedding)
             self._identities = {**self._identities, primary.track_id: (name, 1.0)}  # seed: no register flicker
-            return Registration(None, report, nearest)
+            return Registration(None, report, nearest, near_name if is_duplicate else None)
 
     def forget_user(self, name: str) -> None:
         """Drop a name off the live tracks the instant it is unregistered, so the label goes away.

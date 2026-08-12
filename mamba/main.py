@@ -79,7 +79,7 @@ from app.app import AntiTheftApp  # noqa: E402
 from app.watchdog import Watchdog  # noqa: E402
 from applib import audio_devices, camera_devices, commands, iotc, neutron, vocabulary, webrtc  # noqa: E402
 from applib.camera import Camera  # noqa: E402
-from applib.commands import Command, CommandService  # noqa: E402
+from applib.commands import Command, CommandResult, CommandService  # noqa: E402
 from applib.detector import Detector  # noqa: E402
 from applib.eventlog import EventLog  # noqa: E402
 from applib.face import FaceRecognizer  # noqa: E402
@@ -100,6 +100,8 @@ VLM_WEIGHTS = MODELS / "vlm"                          # SmolVLM, pulled from Hug
 VERSION = "1.1.0"       # reported as the 'version' telemetry attribute
 FPS_REPORT_FRAMES = 15  # how often the frame loop refreshes the fps it tells the cloud
 RESTART_DELAY_S = 3.0   # a restart waits this long, so its C2D ack reaches the cloud first
+# Commands whose answer is prose, arriving tens of seconds after anyone asked for it. See show_action.
+SLOW_ANSWER_VERBS = {commands.AGENT, commands.DESCRIBE_SCENE}
 
 
 class TextCommandFile:
@@ -224,7 +226,8 @@ def parse_args() -> argparse.Namespace:
 
     voice = parser.add_argument_group("voice")
     voice.add_argument("--no-voice", action="store_true", help="run the video loop only, no eIQ payload")
-    voice.add_argument("--mic", help="capture device, overriding audio.json (alias, substring, or ALSA name)")
+    voice.add_argument("--mic",
+                       help="capture device, overriding audio.json ('auto', alias, substring, or ALSA name)")
     voice.add_argument("--speaker", help="playback device, overriding audio.json")
     voice.add_argument("--range", type=int, help="micfil hardware gain 0-15, overriding audio.json")
     voice.add_argument("--gain", type=float, help="digital playback gain, overriding audio.json")
@@ -376,7 +379,8 @@ def main() -> None:
     # LLM's tools *are* the command handlers, so the agent cannot be built before the app that owns
     # them. (The second is `set_upload_capture` below, for the same kind of reason.)
     app.set_agent(build_agent(args, app, overlay))
-    service = CommandService(app.on_command, max_workers=args.command_threads)
+    service = CommandService(app.on_command, max_workers=args.command_threads,
+                             on_result=lambda result: show_action(overlay, result))
     # A recording's screenshots are ordinary `snapshot` commands, submitted from the video loop and
     # run on a command worker - so the ~100 KB upload never touches the frame loop, and a picture
     # the watchdog took is the same thing as one anybody else asked for.
@@ -453,6 +457,36 @@ def main() -> None:
 
     if restart_event.is_set():
         restart_process()
+
+
+def show_action(overlay: Overlay, result: CommandResult) -> None:
+    """Flash a finished command's answer on the screen - and on the stream, which is the same pixels.
+
+    Until now the only acknowledgement a command had was spoken, so a visitor at a noisy booth, or
+    anyone driving the demo from the dashboard, had to infer from the HUD whether anything had
+    happened. Two seconds of "Registered Nick." or "I cannot see a laptop." is that answer.
+
+    Two kinds of result are deliberately not shown, and deciding that is the whole reason this is a
+    function rather than a bound method:
+
+    **The watchdog's own commands.** A recording takes a screenshot every three seconds
+    (`watchdog.set_capture` below), and "Snapshot uploaded." blinking on the display every three
+    seconds says nothing the REC mark in the corner is not already saying, while covering the
+    screen precisely when something interesting is happening in front of it.
+
+    **`agent` and `describe scene`.** Both are prose, and both arrive tens of seconds after anybody
+    asked for anything - the LLM at ~5 tokens/second, the VLM not much better. A flash on the
+    screen is read as *"this just happened"*, so a paragraph appearing half a minute late attaches
+    itself to whatever is in front of the camera by then, and two seconds is not long enough to
+    read it anyway. Those two answers already have the channels that suit them: voice speaks them
+    in full, and the dashboard gets the whole thing as `answer`. Everything left here is a short
+    confirmation of something the demo did.
+    """
+    if result.source == "watchdog":
+        return
+    if result.command is not None and result.command.verb in SLOW_ANSWER_VERBS:
+        return
+    overlay.show_action(result.message, result.is_ok)
 
 
 def build_streamer(args, overlay: Overlay, camera: Camera) -> WebRtcStreamer:
@@ -536,7 +570,14 @@ def resolve_camera_device(args) -> str:
 
 
 def resolve_audio_config(args) -> audio_devices.AudioConfig:
-    """audio.json holds the defaults; anything given on the command line wins."""
+    """audio.json holds the defaults; anything given on the command line wins.
+
+    It ships with `"capture_device": "auto"`, which takes the microphone out of whatever is plugged
+    into USB - normally the webcam's, right in front of the person talking - and falls back to the
+    board's own `micfil` when nothing is. So the line printed here is worth reading: a demo that
+    cannot hear anybody and a demo listening to a microphone soldered to the board look identical
+    until you know which device it opened. `audio_devices.py` explains the rule.
+    """
     config = audio_devices.load_audio_config()
     if args.mic:
         config.capture_device = audio_devices.resolve_device(args.mic, is_capture=True)
@@ -548,6 +589,7 @@ def resolve_audio_config(args) -> audio_devices.AudioConfig:
         config.playback_gain = args.gain
     if args.capture_gain is not None:
         config.capture_gain = args.capture_gain
+    print(f"Audio      : mic {config.capture_device}, speaker {config.playback_device}")
     return config
 
 

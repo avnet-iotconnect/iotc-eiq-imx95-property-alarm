@@ -21,6 +21,14 @@ screen, at the application's own resolution, with no second renderer to keep in 
 The encoded branch matters as much. `v4l2h264enc` is the i.MX95's hardware encoder, so the WebRTC
 feed is compressed by the VPU and no frame is ever copied into Python for it. See `webrtc.py` for
 the other half of that.
+
+**There is no mirror here, and that was decided rather than overlooked.** A `videoflip
+method=horizontal-flip` in front of the first tee makes the preview behave like a mirror, works, and
+costs 1.85 ms per frame on the capture thread - but flipping the *source* flips everything printed
+inside the scene with it, so a badge, a screen or a label in shot reads backwards on the display, in
+the stream, and in every JPEG the cloud is sent. Mirroring further down instead is worse: after
+`cairooverlay` the OSD's own text is reversed too, and before it Cairo would be drawing boxes at
+unmirrored coordinates over a mirrored picture. See `work/STATUS-mamba.md`.
 """
 
 from __future__ import annotations

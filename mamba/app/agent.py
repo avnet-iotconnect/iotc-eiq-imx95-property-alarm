@@ -17,6 +17,26 @@ same entry point voice and /IOTCONNECT C2D use, with the same handlers, the same
 same lock. So the model cannot do anything a dashboard command could not do, and a refusal
 ("Michael is already registered") comes back to it as text, which it relays in its own words.
 
+**Every tool call is printed** - the name, the argument the model chose and what came back, two
+indented lines per call (`log_call`). The model's own closing sentence is not evidence of what it
+did - it describes what it meant to do - and the argument is the half most worth seeing, because
+that is where a mangled name becomes the wrong user.
+
+**A request can need more than one tool, and two things had to change for that to work.**
+"Register user Joe and take a screenshot" is two commands, and it used to do neither.
+
+1. *The connector loses tool calls when it streams* - `IS_STREAMING = False`, and this is the half
+   that mattered. Measured against the board: streamed, that sentence comes back as an empty
+   message with `finish_reason: stop` and no tool call at all, while the **same** request
+   non-streamed returns a correct `register_user('Joe')`. Single-tool questions do stream
+   correctly, which is why this survived lion. Nothing here needs tokens as they are produced -
+   the answer is spoken and sent to the cloud when it is finished - so not streaming costs the
+   demo nothing. See `work/NXP-eiq-aaf-connector-issues.md`.
+2. *The prompt has to say so*: a model this size will otherwise do the first thing, answer, and
+   consider the sentence dealt with. `SYSTEM_PROMPT` asks for one tool at a time, each after the
+   last one's result, and for an answer only when nothing is left to do - the sequential phrasing
+   matters, because parallel tool calls would run two of `app.py`'s handlers against the same lock.
+
 **Three limits worth knowing before changing anything here:**
 
 - *4096 tokens, prompt plus generation*, compiled into the model - and every tool schema is part of
@@ -60,11 +80,14 @@ ARA_URL = "http://127.0.0.1:3000/v1"   # the connector, on the board, beside us
 ARA_MODEL = "Qwen2.5-7B-Instruct"      # the 1.5B also loads, but loops forever instead of calling tools
 MAX_TOKENS = 256                       # ~50 s of generation at 5 tok/s; long enough for any answer here
 TEMPERATURE = 0.7                      # NOT 0.0 - see the module docstring
+IS_STREAMING = False                   # the connector loses tool calls when it streams - see above
 
 SYSTEM_PROMPT = (
     "You are the assistant built into an anti-theft camera demo on an NXP i.MX95 board. "
     "Use a tool whenever the answer depends on what the demo knows, or when the user asks you to "
     "change something. Never guess at the state of the demo. "
+    "A request may ask for more than one thing: do every part of it, one tool at a time, waiting "
+    "for each result before calling the next tool, and only answer once nothing is left to do. "
     "Answer in one or two short sentences, in plain language."
 )
 
@@ -85,7 +108,8 @@ class AgentService:
         self._model = OpenAIModel(
             client_args={"api_key": "unused", "base_url": base_url},
             model_id=model_id,
-            params={"temperature": TEMPERATURE, "max_tokens": max_tokens},
+            # stream=False is not a preference - see IS_STREAMING.
+            params={"temperature": TEMPERATURE, "max_tokens": max_tokens, "stream": IS_STREAMING},
         )
         self._tools = self._build_tools()
         self._lock = Lock()
@@ -133,16 +157,15 @@ class AgentService:
             """Return the current date, time and time zone on the device."""
             # astimezone() is what puts the zone on it: a naive datetime has none, and %Z would be
             # blank. It reads the board's own TZ, so a demo travelling to a booth reports local time.
-            now = datetime.now().astimezone().strftime("%A %Y-%m-%d %H:%M %Z (UTC%z)")
-            print(f"    [agent] tool get_time -> {now}")
-            return now
+            log_call("get_time")
+            return log_result("get_time", datetime.now().astimezone()
+                              .strftime("%A %Y-%m-%d %H:%M %Z (UTC%z)"))
 
         @tool
         def get_status() -> str:
             """Return the alarm state, the registered users and what the camera can see right now."""
-            status = describe_status()
-            print(f"    [agent] tool get_status -> {status}")
-            return status
+            log_call("get_status")
+            return log_result("get_status", describe_status())
 
         @tool
         def take_screenshot() -> str:
@@ -215,9 +238,35 @@ class AgentService:
         `is_exact`, as for a C2D command: the model produces the name the user typed, so matching it
         phonetically ("Michael" -> Marija) would act on the wrong person. When the name is not there,
         `app.py`'s refusal says which names are, and the model relays that.
+
+        A refusal is logged as the result, not as a failure, because that is what it is from here:
+        the model reads it and says it back in its own words.
         """
-        print(f"    [agent] tool {verb}{' ' + repr(argument) if argument else ''}")
+        log_call(verb, argument)
         try:
-            return self.run_command(Command(verb, argument, f"agent: {verb}", is_exact=True))
+            return log_result(verb, self.run_command(
+                Command(verb, argument, f"agent: {verb}", is_exact=True)))
         except CommandError as error:
-            return str(error)
+            return log_result(verb, str(error))
+
+
+def log_call(name: str, argument: str = "") -> None:
+    """Print what the model decided to do, *before* it happens.
+
+    Two lines per tool, indented under the question, because a run of the demo used to show only the
+    model's final sentence - and a sentence is exactly the part that cannot be trusted to say what
+    was really done, or with which argument. The call line comes first because tools take time (a
+    registration counts a person down for up to nine seconds), and a console that speaks only
+    afterwards looks hung.
+
+    `flush` because these lines are interleaved with four other threads' logging and stdout is a
+    pipe whenever the demo is run from anything but a terminal.
+    """
+    print(f"    [agent] tool {name}({argument!r})" if argument else f"    [agent] tool {name}()",
+          flush=True)
+
+
+def log_result(name: str, result: str) -> str:
+    """... and print what came back, which is all the model has to answer from. Returns it."""
+    print(f"    [agent] tool {name} -> {result!r}", flush=True)
+    return result

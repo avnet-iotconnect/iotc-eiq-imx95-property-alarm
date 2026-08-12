@@ -27,8 +27,9 @@ Both end in the same `execute()`, the same handler and the same `CommandResult`.
 
 The result type is the reason this file exists at all. A handler either returns a sentence or raises
 `CommandError`; both come back as a `CommandResult` carrying `is_ok` plus **text**. Voice speaks that
-text either way; a C2D ack sends it back to the cloud as the command response. Making the failure
-path a string rather than an exception is what lets one implementation serve both.
+text either way; a C2D ack sends it back to the cloud as the command response; and `on_result` hands
+the same sentence to the OSD, so the screen says what happened even when nobody heard it. Making the
+failure path a string rather than an exception is what lets one implementation serve all three.
 
     service = CommandService(app.on_command)
     result = service.submit("register user Michael", source="voice").result()
@@ -211,8 +212,16 @@ class CommandService:
     way). The handler serialises itself internally - see `AntiTheftApp.on_command`.
     """
 
-    def __init__(self, handler: Callable[[Command], str], max_workers: int = 4) -> None:
+    def __init__(self, handler: Callable[[Command], str], max_workers: int = 4,
+                 on_result: Callable[[CommandResult], None] | None = None) -> None:
         self.handler = handler
+        # Called with every finished result, whatever the source - the OSD's "Registered Nick."
+        # hangs off this. One hook here rather than one per source: voice waits on the future, C2D
+        # does not, and the watchdog throws its away, so the sources are the wrong place to notice
+        # that something finished. What it does *not* see is the LLM's individual tool calls, which
+        # go straight into `app.on_command` (see `app/agent.py`) - so a question that arms the alarm
+        # and takes a picture flashes its answer once, not three times.
+        self.on_result = on_result or (lambda result: None)
         self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="command")
 
     def submit(self, text: str, source: str = "voice") -> Future[CommandResult]:
@@ -228,7 +237,7 @@ class CommandService:
         command = parse(text)
         if command is None:
             print(f"[cmd] {source}: {text.strip()!r} -> not a command")
-            return CommandResult(False, NOT_UNDERSTOOD, source)
+            return self._finish(CommandResult(False, NOT_UNDERSTOOD, source))
         return self.execute(command, source)
 
     def execute(self, command: Command, source: str = "voice") -> CommandResult:
@@ -237,13 +246,26 @@ class CommandService:
               f"{' ' + repr(command.argument) if command.argument else ''}")
         try:
             message = self.handler(command)
-            return CommandResult(True, message, source, command)
+            return self._finish(CommandResult(True, message, source, command))
         except CommandError as error:
             print(f"[cmd] refused: {error}")
-            return CommandResult(False, str(error), source, command)
+            return self._finish(CommandResult(False, str(error), source, command))
         except Exception as error:  # a bug in a handler must not kill the demo
             logger.exception("command %s raised", command.verb)
-            return CommandResult(False, f"Something went wrong: {type(error).__name__}", source, command)
+            return self._finish(
+                CommandResult(False, f"Something went wrong: {type(error).__name__}", source, command))
+
+    def _finish(self, result: CommandResult) -> CommandResult:
+        """Announce a finished result, then hand it back - so every `return` above is one line.
+
+        A failing hook must not turn a command that worked into one that did not, hence the guard:
+        the OSD is the least important thing in this process.
+        """
+        try:
+            self.on_result(result)
+        except Exception:
+            logger.exception("the on_result hook raised")
+        return result
 
     def stop(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)

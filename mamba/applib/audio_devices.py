@@ -3,12 +3,23 @@
 Two jobs: turn a friendly device name into an ALSA device string, and set the gain that NXP's own
 code does not.
 
-**Device naming.** `audio.json` may name a device three ways, so swapping in a USB microphone later
+**Device naming.** `audio.json` may name a device four ways, so swapping in a USB microphone later
 needs no knowledge of ALSA syntax:
 
+    "auto"                        whatever is plugged into USB, else the board's own codec
     "micfil"                      an alias from ALIASES below
     "Fifine"                      any substring of a card name in `arecord -l`
     "plughw:CARD=C920,DEV=0"      a full ALSA device string, passed through untouched
+
+**"auto" is the default, and it picks by the bus rather than by the name** - the same rule
+`camera_devices.py` uses to find the camera, and for the same reason. Whatever a booth brings is on
+USB: the webcam's own microphone, a headset, a conference puck. Naming them would mean a list to
+keep up to date, and the one thing the board's own microphone can never be is a USB device. The
+kernel says which is which: only a USB card gets a `usbid` in `/proc/asound/<card>/`.
+
+That is worth having because `micfil` is a PDM microphone soldered to the board, pointing wherever
+the board is pointing, some distance from whoever is talking to it - and speech recognition is the
+part of this demo with the least headroom. A webcam's microphone is next to the person's face.
 
 **Gain.** NXP's audio manager raises mixer levels on startup in `set_audio_device_config.py`, but only
 for the wm8960 and wm8962 codecs fitted to their other EVKs -- its final branch is a debug log. This
@@ -43,6 +54,11 @@ ALIASES = {
     "mqs": "mqsaudio",
 }
 
+# What "auto" falls back to: the two codecs this board has of its own, which are the two that
+# cannot be unplugged.
+BOARD_MICROPHONE = "micfil"
+BOARD_SPEAKER = "mqs"
+
 CARD_LINE = re.compile(r"^card (\d+): (\S+) \[([^\]]+)\], device (\d+):")
 
 
@@ -75,8 +91,21 @@ def list_devices(is_capture: bool) -> list[tuple[str, str]]:
     return found
 
 
+def find_usb_card(is_capture: bool) -> str | None:
+    """The first USB card that can record (or play), by its ALSA id -- "C920" -- or None.
+
+    `/proc/asound/<card>/usbid` is the kernel's own answer to "is this thing on USB", present for
+    USB-Audio cards and for nothing else; `arecord -l` has already narrowed the list to cards that
+    can do the direction we want, so the metadata-node problem the camera has does not arise here.
+    """
+    return next((card_id for card_id, _ in list_devices(is_capture)
+                 if Path(f"/proc/asound/{card_id}/usbid").exists()), None)
+
+
 def resolve_device(name: str, is_capture: bool) -> str:
-    """Turn an alias, a card-name substring, or a full ALSA string into an ALSA device string."""
+    """Turn "auto", an alias, a card-name substring or a full ALSA string into an ALSA device."""
+    if name == "auto":
+        name = find_usb_card(is_capture) or (BOARD_MICROPHONE if is_capture else BOARD_SPEAKER)
     if ":" in name or name in ("default", "null", "pipewire"):
         return name
 
@@ -110,7 +139,9 @@ def prepare_capture_device(capture_device: str, micfil_range: int = 10) -> None:
         set_micfil_range(micfil_range)
     elif "C920" in capture_device:
         # Already 15/15 from the factory, so this is a guard against something having lowered it.
-        _run_amixer("-c", "C920", "sset", "Mic Capture Volume", "15")
+        # The simple control is "Mic": `Mic Capture Volume` is the *kernel* control's name (numid=3)
+        # and `sset` does not take those, so asking for it by that name only ever printed a warning.
+        _run_amixer("-c", "C920", "sset", "Mic", "15")
     else:
         logger.info("No gain profile for '%s' -- leaving mixer levels alone", capture_device)
 

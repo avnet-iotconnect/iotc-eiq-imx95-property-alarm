@@ -19,6 +19,11 @@ import cairo
 
 from applib.tracking import Track, color_for
 
+# What a finished command flashes on the screen: how long it stays, and how much of it fits on one
+# line across the frame at 24 pt. An `agent` answer is a couple of sentences and has to be cut.
+ACTION_MESSAGE_S = 2.0
+ACTION_MAX_CHARS = 46
+
 
 class AlarmState(Enum):
     """The alarm is a *switch*, and these are its two positions (label + HUD color, RGB 0..1).
@@ -58,6 +63,9 @@ class Overlay:
         self.end_to_end_ms = 0.0
         self.countdown_message = ""
         self.countdown_until = 0.0
+        self.action_message = ""
+        self.action_until = 0.0
+        self.is_action_ok = True
 
     def set_tracks(self, tracks: list[Track]) -> None:
         self.tracks = tracks  # atomic reference swap; the draw callback reads the latest
@@ -113,6 +121,25 @@ class Overlay:
     def stop_countdown(self) -> None:
         self.countdown_until = 0.0
 
+    def show_action(self, message: str, is_ok: bool = True) -> None:
+        """Flash what a command just did, for two seconds. Every action's answer comes through here.
+
+        Feedback rather than a log: a newer action replaces whatever is up and restarts the two
+        seconds, because the only thing worth reading at a booth is the last thing that happened.
+        Refusals are shown too, in red - "Michael is already registered" is exactly the sentence
+        somebody standing in front of the camera needs, and until now it was only spoken.
+
+        Which commands get here at all is `main.py`'s decision, not this file's - the watchdog's
+        own three-second screenshots are filtered out there.
+
+        A deadline rather than a timer, as with the countdown, so the display thread needs nothing
+        from the command thread that set it. The three fields are written without a lock; at worst
+        one frame shows a new message in the previous one's colour.
+        """
+        self.action_message = _shorten(message, ACTION_MAX_CHARS)
+        self.is_action_ok = is_ok
+        self.action_until = monotonic() + ACTION_MESSAGE_S
+
     def draw(self, context: cairo.Context) -> None:
         """The cairooverlay `draw` callback: paint boxes, the HUD, and the alarm banner if armed-tripped."""
         self._draw_boxes(context)
@@ -120,6 +147,7 @@ class Overlay:
         if self.is_recording:
             self._draw_recording(context)
         self._draw_countdown(context)
+        self._draw_action(context)
 
     def _draw_boxes(self, context: cairo.Context) -> None:
         context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
@@ -193,10 +221,29 @@ class Overlay:
             return
         context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         context.set_font_size(28)
-        text = f"{self.countdown_message}  {ceil(remaining)}"
+        self._draw_centered(context, f"{self.countdown_message}  {ceil(remaining)}",
+                            self.frame_height - 24, (1.0, 1.0, 1.0))
+
+    def _draw_action(self, context: cairo.Context) -> None:
+        """'Registered Nick.' along the bottom for two seconds, white, or red when it was refused.
+
+        A line above the countdown rather than sharing it: the two can be up at once, because an
+        `agent` question runs outside the command lock and its answer can land while somebody else
+        is being counted down. Nothing here is ever the *only* copy of the message - voice speaks
+        it and the dashboard gets it as an ack - so cutting it to one line loses nothing.
+        """
+        if monotonic() >= self.action_until:
+            return
+        context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        context.set_font_size(24)
+        color = (1.0, 1.0, 1.0) if self.is_action_ok else (1.0, 0.25, 0.25)
+        self._draw_centered(context, self.action_message, self.frame_height - 62, color)
+
+    def _draw_centered(self, context: cairo.Context, text: str, y: float,
+                       rgb: tuple[float, float, float]) -> None:
+        """Draw one line centred across the frame, at the font size the caller has already set."""
         extents = context.text_extents(text)
-        x = (self.frame_width - extents.width) / 2 - extents.x_bearing
-        _draw_text(context, text, x, self.frame_height - 24, (1.0, 1.0, 1.0))
+        _draw_text(context, text, (self.frame_width - extents.width) / 2 - extents.x_bearing, y, rgb)
 
     def _draw_recording(self, context: cairo.Context) -> None:
         """A red dot and REC in the top-right corner, while the watchdog is uploading screenshots.
@@ -275,6 +322,14 @@ def save_composed(path, frame_rgb) -> str:
 
 def _fps(ms: float) -> float:
     return 1000.0 / ms if ms else 0.0
+
+
+def _shorten(text: str, limit: int) -> str:
+    """One line, short enough to fit across the frame. Handler answers can be a paragraph."""
+    single_line = " ".join(text.split())
+    if len(single_line) <= limit:
+        return single_line
+    return single_line[:limit - 3].rstrip() + "..."
 
 
 def _draw_text(context: cairo.Context, text: str, x: float, y: float, rgb: tuple[float, float, float]) -> None:

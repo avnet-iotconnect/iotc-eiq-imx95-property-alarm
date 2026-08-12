@@ -127,7 +127,9 @@ tarball and unpack it".
 
 PP-OCRv3 text detection + CRNN_EN text recognition, both from opencv_zoo, run through cv2.dnn — the board's OpenCV already ships them, so no pip, no onnxruntime, no VLM. Detection is cheap and recognition is not, so detect first and recognise only what you need, splitting each line at its word gaps before recognising. Measured on the board: detection ~247 ms at 640×480 (~49 ms at 256×192), recognition ~200 ms per line — so a naive full-badge pass costs ~1.85 s.
 
-# FAQ/Troubleshooting
+# Tips, FAQ and Troubleshooting
+
+- The demo will default to the USB audio. If you don't want audio to be detected, run the demo with the 3.5mm jack sound device `./run.sh --mic micfilaudio` with no microphone plugged in.
 
 - If a demo abruptly power cycles the board, the most likely issue is power delivery.
 Plug the board into a high power USB port, using the cable supplied with the board or 
