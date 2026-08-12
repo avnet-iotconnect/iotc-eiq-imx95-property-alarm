@@ -42,6 +42,7 @@ Threads, and the whole design is about keeping them apart:
     voice      one thread: loads eIQ, waits for the wake word, transcribes      (voice.py)
     commands   a pool of 4: runs what was said, and answers                     (commands.py)
     iotc       one thread publishing telemetry, plus paho's own MQTT thread     (iotc.py)
+    faces      one thread polling the device's S3 folder for photographs        (face_uploads.py)
     webrtc     one thread running asyncio: signalling and every viewer          (webrtc.py)
 
 The LLM gets no thread of its own: an `agent` question occupies one command worker for the ~30 s it
@@ -83,6 +84,7 @@ from applib.commands import Command, CommandResult, CommandService  # noqa: E402
 from applib.detector import Detector  # noqa: E402
 from applib.eventlog import EventLog  # noqa: E402
 from applib.face import FaceRecognizer  # noqa: E402
+from applib.face_uploads import FaceUploads  # noqa: E402
 from applib.face_worker import FaceWorker  # noqa: E402
 from applib.guard import ObjectGuard  # noqa: E402
 from applib.iotc import IotcClient  # noqa: E402
@@ -97,6 +99,7 @@ from applib.webrtc import WebRtcStreamer  # noqa: E402
 
 MODELS = Path(__file__).resolve().parent / "models"  # converted on the host, copied over with us
 VLM_WEIGHTS = MODELS / "vlm"                          # SmolVLM, pulled from Hugging Face by --prefetch
+FACES = Path(__file__).resolve().parent / "faces"     # photographs downloaded from the device's S3 folder
 VERSION = "1.1.0"       # reported as the 'version' telemetry attribute
 FPS_REPORT_FRAMES = 15  # how often the frame loop refreshes the fps it tells the cloud
 RESTART_DELAY_S = 3.0   # a restart waits this long, so its C2D ack reaches the cloud first
@@ -404,7 +407,10 @@ def main() -> None:
     else:
         overlay.set_voice_status("voice: off")
 
-    cloud = build_iotc_client(args, service, telemetry, overlay, streamer)
+    # A photograph dropped into the device's S3 folder registers whoever is named in its file name.
+    # It has no bucket yet - `iotc.py` starts it once the cloud names one.
+    face_uploads = FaceUploads(app.on_face_image, FACES)
+    cloud = build_iotc_client(args, service, telemetry, overlay, streamer, face_uploads)
     if cloud is not None:
         # The other back-edge: a snapshot is saved by the app and uploaded by the cloud, and the
         # cloud cannot exist until the command service does. Handing over one bound method keeps
@@ -447,6 +453,7 @@ def main() -> None:
     finally:
         if cloud is not None:
             cloud.stop()
+        face_uploads.stop()
         if streamer is not None:
             streamer.stop()
         if voice is not None:
@@ -523,7 +530,8 @@ def build_agent(args, app: AntiTheftApp, overlay: Overlay) -> AgentService | Non
 
 
 def build_iotc_client(args, service: CommandService, telemetry: TelemetryState, overlay: Overlay,
-                      streamer: WebRtcStreamer | None) -> IotcClient | None:
+                      streamer: WebRtcStreamer | None,
+                      face_uploads: FaceUploads) -> IotcClient | None:
     """The /IOTCONNECT client, or None when `--no-iotc` says so. Nothing else makes it optional.
 
     Deliberately unguarded: a missing config, an unreadable key or a device the back end does not
@@ -539,7 +547,7 @@ def build_iotc_client(args, service: CommandService, telemetry: TelemetryState, 
     client = IotcClient(
         Path(args.iotc_config), service, telemetry, capture_path=Path(args.capture),
         app_version=VERSION, cert_path=Path(args.iotc_cert), key_path=Path(args.iotc_key),
-        streaming=streamer,
+        streaming=streamer, face_uploads=face_uploads,
         on_status=overlay.set_cloud_status, on_stream_status=overlay.set_stream_status,
         interval_s=args.iotc_interval, is_verbose=args.iotc_verbose,
     )

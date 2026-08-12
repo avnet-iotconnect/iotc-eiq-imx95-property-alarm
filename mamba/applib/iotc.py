@@ -20,7 +20,8 @@ What flows each way:
           every one is acknowledged with the same sentence the demo would have spoken
     S3    `upload_capture()` puts capture.jpg in the bucket; /IOTCONNECT timestamps each version.
           The snapshot *handler* calls it, through a callable `main.py` handed the app - so saving
-          and uploading are one command, and `app.py` still imports nothing from here
+          and uploading are one command, and `app.py` still imports nothing from here. The bucket
+          is read as well as written: `face_uploads.py` is handed it here and polls `faces/`
     KVS   the signalling channel ARN and the AWS credentials `webrtc.py` signs its socket with
 
 Two acks are **shortened** here, and only here, because the dashboard shows an ack as a *tooltip*:
@@ -55,6 +56,7 @@ from typing import TYPE_CHECKING, Callable
 
 from applib import commands
 from applib.commands import Command, CommandError, CommandService
+from applib.face_uploads import FaceUploads
 from applib.telemetry import TelemetryState
 
 if TYPE_CHECKING:  # imported for the type only: webrtc.py pulls in aiortc, which may not be there
@@ -103,7 +105,7 @@ class IotcClient:
     def __init__(
         self, config_path: Path, service: CommandService, telemetry: TelemetryState,
         capture_path: Path, app_version: str, cert_path: Path, key_path: Path,
-        streaming: "WebRtcStreamer | None" = None,
+        streaming: "WebRtcStreamer | None" = None, face_uploads: FaceUploads | None = None,
         on_status: Callable[[str], None] | None = None,
         on_stream_status: Callable[[str], None] | None = None,
         interval_s: float = TELEMETRY_INTERVAL_S, is_verbose: bool = False,
@@ -114,6 +116,7 @@ class IotcClient:
         self.capture_path = capture_path
         self.app_version = app_version
         self.streaming = streaming  # started here, because only the cloud knows the channel ARN
+        self.face_uploads = face_uploads  # ... and only the cloud knows the bucket, likewise
         self.cert_path = cert_path
         self.key_path = key_path
         self.on_status = on_status or (lambda status: None)
@@ -211,6 +214,13 @@ class IotcClient:
             bucket = self._s3.get_default_bucket()
             print(f"[iotc] S3 bucket {bucket.bucket_name if bucket else '(none)'}, credentials "
                   f"good for {self._s3.get_secs_to_expiry() / 60:.0f} min")
+            if self.face_uploads is not None and bucket is not None:
+                self.face_uploads.start(
+                    bucket.bucket_name,
+                    bucket.role_arn if bucket.is_customer_owned else None,
+                    get_device_uploads_path(self._client),
+                    lambda: self._s3.get_credentials(
+                        refresh_if_secs_to_expiry=CREDENTIALS_MARGIN_S))
 
         if self._kvs is None:
             print("[iotc] KVS disabled for this device (enable Streaming in the template)")
@@ -360,6 +370,15 @@ class IotcClient:
     def _on_disconnect(self, reason: str, is_from_server: bool) -> None:
         print(f"[iotc] disconnected{' by the server' if is_from_server else ''}: {reason}")
         self.on_status("cloud: offline")
+
+
+def get_device_uploads_path(client: Client) -> str:
+    """The device's own directory in the S3 bucket, as a key prefix ending in '/'.
+
+    The SDK has no accessor for it: `Client.s3_upload` builds the same string inline and prepends it
+    to the relative path it is given, so reading the directory means composing it the same way.
+    """
+    return f"device-uploads/{client.get_client_id()}/"
 
 
 def shorten(text: str, limit: int) -> str:

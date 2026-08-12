@@ -7,8 +7,9 @@ methods:
 
     on_frame(frame, tracks)   - every camera frame: watch it, then show it        [video thread]
     on_command(command)       - one parsed command, from voice, the file or C2D   [command thread]
+    on_face_image(name, path) - a photograph of somebody, dropped in the cloud    [uploads thread]
 
-Reading those two methods top to bottom is the whole behaviour of the demo.
+Reading those three methods top to bottom is the whole behaviour of the demo.
 
 **The LLM is a command source, not a decision maker.** `agent` hands a sentence to the 7B model on
 the Ara-240 (`agent.py`), whose tools come back in through `on_command` - so the model can arm the
@@ -168,6 +169,31 @@ class AntiTheftApp:
         with self._lock:
             return handler(command)
 
+    def on_face_image(self, name: str, image_path: Path) -> str:
+        """Register the person in a photograph that arrived in the device's cloud folder.
+
+        The third way in, and the only one nobody is waiting on (`applib/face_uploads.py`). It
+        returns one word - `registered`, `already-registered` or `refused` - which the poller keeps
+        beside the picture, so each upload is judged exactly once and stays judged. That is what
+        lets "unregister the president" survive the folder he is still in.
+
+        *Why* a picture was refused is deliberately not in that word: the sentence goes to the
+        console and to the dashboard, where somebody will read it. The record only has to answer
+        "has this file been dealt with".
+
+        The command lock is taken, so this waits its turn behind somebody being counted down in
+        front of the camera.
+        """
+        with self._lock:
+            if name in self.registry.user_names:
+                print(f"[app] {image_path.name}: {name} is already registered")
+                return "already-registered"
+            answer = self._register_from_photo(name, image_path)
+            is_registered = name in self.registry.user_names  # the database, not the sentence
+        print(f"[app] {answer}")
+        self.telemetry.set_once(answer=answer)
+        return "registered" if is_registered else "refused"
+
     # --- handlers -----------------------------------------------------------------------------
 
     def _register_user(self, command: Command) -> str:
@@ -252,6 +278,27 @@ class AntiTheftApp:
         except CommandError as error:
             answer = f"no picture ({error})"
         print(f"[app] registration snapshot for {name}: {answer}")
+
+    def _register_from_photo(self, name: str, image_path: Path) -> str:
+        """Judge one photograph, store the face if it is good enough, and say what was decided.
+
+        **A face already registered under another name is refused here, where a live registration
+        replaces.** That rule exists for a name the recogniser mis-heard, which the visitor fixes by
+        saying it again - they are standing there and the name they just gave is the one they meant.
+        A file has nobody behind it, so the same face under a second name is either a mistake in the
+        folder or two people the embedder cannot tell apart, and deleting the name that was already
+        there answers neither.
+        """
+        look = self.face_worker.look_at_photo(image_path)
+        print(f"[app] photo {image_path.name!r} for {name!r}: {look.report}  nearest {look.nearest}")
+        if look.problem is not None:
+            return f"I did not register {name} from {image_path.name}: {look.problem}."
+        if look.duplicate is not None:
+            return (f"I did not register {name} from {image_path.name}: that face is already "
+                    f"registered as {look.duplicate}.")
+        self.registry.register_user(name, look.embedding)
+        return (f"Registered {name} from {image_path.name}. "
+                f"I now know {', '.join(self.registry.user_names)}.")
 
     def _count_down(self, message: str, seconds: float) -> None:
         """Put a message and a ticking number on the screen, and wait for it to run out.

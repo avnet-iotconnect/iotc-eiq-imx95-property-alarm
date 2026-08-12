@@ -103,10 +103,22 @@ class CommandError(Exception):
 # Anchor words, checked as whole words after normalisation. Each set holds the real word plus the
 # manglings STT has been seen to produce for it. Add to these when the booth catches a new one.
 
-_UNREGISTER = {"unregister", "unregistered", "unregistering", "deregister", "deregistered",
-               "onregister", "anregister", "remove", "removed", "forget", "delete", "deleted",
-               "erase", "drop"}
-_REGISTER = {"register", "registered", "registering", "registry", "bridge", "rechester"}
+# The recogniser splits a prefixed verb - "un register", "dis arm" - and `_normalise` rejoins it
+# verbatim, so every prefix+stem pair has to be in the set for its verb. For "unregister" they are
+# generated rather than typed, because the *prefix itself* comes back mangled: "I'm register the
+# president" is what the booth heard for "unregister the president", and losing the negation turns
+# a removal into a registration.
+_PREFIXES = {"un", "on", "an", "de", "dis", "des"}
+# ... and these, which are not prefixes at all - only ever the recogniser's version of "un". They
+# join onto `register` alone: "I'm arming the alarm" and "I'm locking the laptop" are sentences
+# somebody might really say and mean, so doing this to `arm` and `lock` would invert them.
+_MANGLED_PREFIXES = {"im", "in", "am", "en"}
+_REGISTER_STEMS = {"register", "registered", "registering"}
+
+_UNREGISTER = ({"remove", "removed", "forget", "delete", "deleted", "erase", "drop"}
+               | {prefix + stem for prefix in _PREFIXES | _MANGLED_PREFIXES
+                  for stem in _REGISTER_STEMS})
+_REGISTER = _REGISTER_STEMS | {"registry", "bridge", "rechester"}
 _UNLOCK = {"unlock", "unlocked", "unlocking", "onlock", "anlock", "delock"}
 _LOCK = {"lock", "locked", "locking", "guard", "block"}
 _DISARM = {"disarm", "disarmed", "disarming", "desarm", "dearm", "unarm", "disturb"}
@@ -124,12 +136,8 @@ _DESCRIBE = {"describe", "description", "describes", "scene", "seen", "see", "lo
 _SNAPSHOT = {"snapshot", "screenshot", "photo", "picture", "snap", "shot"}
 _USER = {"user", "used", "usar", "uses", "eraser", "person", "object"}
 
-# The recogniser splits the prefixed verbs: "un register", "dis arm". Rejoin them verbatim - the
-# result ("unregister", "dearm", "onregister") is looked up in the sets above, which is why those
-# hold the odd spellings too. Only these stems are ever joined, so "lock an apple" stays two words.
-_PREFIXES = {"un", "on", "an", "de", "dis", "des"}
-_JOINABLE = {"register", "registered", "registering", "lock", "locked", "locking",
-             "arm", "armed", "arming"}
+# Only these stems are ever joined onto a prefix, so "lock an apple" stays two words.
+_JOINABLE = _REGISTER_STEMS | {"lock", "locked", "locking", "arm", "armed", "arming"}
 
 # Never part of an argument; leaving them in drags the phonetic score down ("of Maria" matched
 # Marija at 0.47 where "Maria" alone scores far higher).
@@ -181,11 +189,18 @@ def _normalise(text: str) -> list[str]:
     stripped = text.lower().translate(str.maketrans("", "", string.punctuation))
     words: list[str] = []
     for word in stripped.split():
-        if words and words[-1] in _PREFIXES and word in _JOINABLE:
+        if words and _is_joinable(words[-1], word):
             words[-1] += word
         else:
             words.append(word)
     return words
+
+
+def _is_joinable(previous: str, word: str) -> bool:
+    """Whether "un register" should become one word - see `_PREFIXES` and `_MANGLED_PREFIXES`."""
+    if previous in _PREFIXES:
+        return word in _JOINABLE
+    return previous in _MANGLED_PREFIXES and word in _REGISTER_STEMS
 
 
 def _argument_after(words: list[str], anchors: set[str]) -> str:

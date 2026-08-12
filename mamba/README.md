@@ -125,6 +125,37 @@ people apart, which no threshold above can fix. It is the first thing to read wh
 the wrong face — and it is how the Neutron SDK 3.0.0 defect above was caught, where it read 1.00 for
 everybody.
 
+### Registering somebody from a photograph
+
+The other way in, and it needs neither the person nor the camera: upload `Nick Markovic.jpg` to the
+device's **`faces/` folder** in /IOTCONNECT. The demo looks there every 20 seconds and registers
+whoever the file is named after — so the people you already know you want recognised can be loaded
+the night before, and the demo opens with names on the screen instead of an empty database.
+
+The picture is judged the same way a live look is: too small a face, a turned head or a blurred
+photograph is refused, and the reason is sent to the dashboard. A face already registered under a
+different name is refused too, rather than replacing it — there is nobody standing there to say
+which name they meant.
+
+**Each upload is dealt with once, permanently.** Beside every downloaded picture the demo writes a
+`Nick Markovic.status` file — which upload it was, and one word for how it went:
+
+```json
+{ "etag": "\"23907bab7bfff062d76014cd12e6d30d\"", "status": "registered" }
+```
+
+So a restart does not redo any of it, and unregistering somebody by voice is not undone twenty
+seconds later by the folder they are still in. Why a picture was refused is not in there — that is
+on the console and in the dashboard. Two ways to make it happen again:
+
+```
+re-upload the picture          a new version, so the next poll registers it
+rm -rf faces/                  start over: everything is fetched and offered again
+```
+
+A picture S3 reports no ETag for is **ignored**, with a warning on the console — without one there
+is no way to tell one upload of a file from the next.
+
 ## The pieces
 
 The directories say who each file is for. `app/` is the owner's domain — what the demo *does*, and
@@ -496,6 +527,9 @@ eIQ kills the process after **60 minutes** — the timeout is inside NXP's compi
 along with the models, so at a trade show the demo *will* restart between visitors. Anything set by
 voice therefore goes to disk: registered faces in `faces.json`, the armed flag and locked objects in
 `state.json`. Startup is about 15 seconds. koala can also do the restarting itself: see above.
+
+Photographs pulled from the cloud survive it too — the pictures and their `.status` records are in
+`faces/`, so a restart re-downloads nothing and re-registers nobody.
 
 # The Neutron SDK, and why the demo brings its own
 

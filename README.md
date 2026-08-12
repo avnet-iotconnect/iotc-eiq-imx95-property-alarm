@@ -1,6 +1,31 @@
-# nxp-ml
+# About
 
-Board setup:
+This demo is Smart Camera with property alarm capabilities running on NXP FRDM-IMX95 with optional Ara240 hardware.
+
+FRDM-IMX95 features 6 Arm CPU cores and a Nueutron NPU which accelerate the AI/ML workloads.
+Optional Ara240 can power the large generative models like Qwen 2.5 7B model. 
+
+The demo is partly based on the NXPs's 
+[NXP® eIQ® GenAI Flow Demonstrator Package](https://github.com/nxp-appcodehub/dm-eiq-genai-flow-demonstrator/tree/release/v3.0) 
+version 3.0
+
+
+## Features
+
+A USB camera attached to the FRDM-IMX95 board is used to detect and recognize people, faces and objects.
+
+- Voice processing is triggered by NXP  
+[VIT wake word](https://www.nxp.com/design/design-center/software/embedded-software/voice-intelligent-technology-wake-word-and-voice-command-engines) 
+technology - `Hey NXP`. 
+- The board will process Speech-To-Text commands (Whisper, Moonshine) 
+- The board will provide Text-To-Speech feedback to the user.
+- A locally running VLM (SmolVLM 500M) can be used to describe the scene and answer questions about the scene.
+
+- The camera can be monitored using an HDMI display or remotely via /IOTCONNECT using WebRTC.
+
+The NXP models are licensed for use on NXP hardware only and will run for one hour.
+
+# Board Setup
 Download L6.18.2-1.0.0_MX95from
 [NXP Embedded Linux for i.MX Applications Processors](https://www.nxp.com/design/design-center/software/embedded-software/i-mx-software/embedded-linux-for-i-mx-applications-processors:IMXLINUX) 
 web page. The easiest way is to scroll all the way down to the *Downloads* section
@@ -128,6 +153,9 @@ tarball and unpack it".
 PP-OCRv3 text detection + CRNN_EN text recognition, both from opencv_zoo, run through cv2.dnn — the board's OpenCV already ships them, so no pip, no onnxruntime, no VLM. Detection is cheap and recognition is not, so detect first and recognise only what you need, splitting each line at its word gaps before recognising. Measured on the board: detection ~247 ms at 640×480 (~49 ms at 256×192), recognition ~200 ms per line — so a naive full-badge pass costs ~1.85 s.
 
 # Tips, FAQ and Troubleshooting
+
+- When you have no sound device plugged in, the commands and "Hey NXP" trigger may appear to be delayed. Use the '--no-tts' flag to bypass TTS processing
+and improve visual feedback time.
 
 - The demo will default to the USB audio. If you don't want audio to be detected, run the demo with the 3.5mm jack sound device `./run.sh --mic micfilaudio` with no microphone plugged in.
 

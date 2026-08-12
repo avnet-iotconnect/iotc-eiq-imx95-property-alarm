@@ -19,20 +19,31 @@ still just reads `track.identity`; it never sees this thread.
 Registration goes through here too (`try_register_user`), because this is where the live looks at a
 face are - both the latest one and the one before it, which is what "was the face holding still"
 means. The thresholds it judges them by are `face.py`'s.
+
+`look_at_photo` is the one thing here that has nothing to do with the camera: a picture that arrived
+from the cloud, measured on this same thread because **the models are not re-entrant** - one YuNet
+detector, one SFace interpreter, so every call into `face.py` happens on this one worker thread.
 """
 
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Lock
 from time import perf_counter
 
+import cv2
 import numpy as np
 
-from applib.face import FaceRecognizer, FaceSample, find_quality_problem
+from applib.face import FaceRecognizer, FaceSample, find_photo_problem, find_quality_problem
 from applib.registry import Identity, Registry
 from applib.tracking import Track
+
+# A photograph is detected at this size at most. YuNet is handed the whole picture, and finding one
+# face in a phone camera's twelve megapixels costs seconds of CPU; it also keeps `MIN_FACE_PIXELS`
+# meaning roughly what it means on a 640x480 camera frame instead of passing everything.
+MAX_PHOTO_SIDE = 1280
 
 
 @dataclass
@@ -52,6 +63,21 @@ class Registration:
     @property
     def is_registered(self) -> bool:
         return self.problem is None
+
+
+@dataclass
+class PhotoLook:
+    """What one photograph turned out to hold. `embedding` is set exactly when `problem` is None.
+
+    Nothing has been written when this comes back - unlike `Registration`, which reports one that
+    already happened. The name belongs to the caller, so the decision does too: `app.on_face_image`.
+    """
+
+    problem: str | None
+    report: str = "no face"
+    nearest: str = "-"                        # the registered user this face is most like
+    embedding: np.ndarray | None = None       # what to store, when there is nothing wrong with it
+    duplicate: str | None = None              # ... and that user's name when this *is* them
 
 
 class FaceWorker:
@@ -140,6 +166,37 @@ class FaceWorker:
             self._identities = {**self._identities, primary.track_id: (name, 1.0)}  # seed: no register flicker
             return Registration(None, report, nearest, near_name if is_duplicate else None)
 
+    def look_at_photo(self, image_path: Path) -> PhotoLook:
+        """Measure the face in a photograph the way a live look is measured. Writes nothing.
+
+        The only method here that **blocks on the worker thread**, and it has to: the models are
+        shared and not re-entrant, so a cloud thread embedding a file while a face cycle is
+        embedding the camera would interleave inside both YuNet and SFace. Queuing it behind the
+        cycle costs whoever asked ~50 ms.
+        """
+        return self._executor.submit(self._look_at_photo, image_path).result()
+
+    def _look_at_photo(self, image_path: Path) -> PhotoLook:
+        image_bgr = cv2.imread(str(image_path))
+        if image_bgr is None:
+            return PhotoLook("it is not an image I can read")
+        image_bgr = _fit_within(image_bgr, MAX_PHOTO_SIDE)
+        height, width = image_bgr.shape[:2]
+        image_rgb = np.ascontiguousarray(image_bgr[:, :, ::-1])
+        # The whole picture stands in for a person box: a portrait is a person crop already, so
+        # embed_person does what it does for a track - largest face, aligned, embedded, measured.
+        sample = self.face.embed_person(image_rgb, [0, 0, width, height])
+        if sample is None:
+            return PhotoLook("I cannot find a face in it")
+        near_name, near_score = self.registry.find_nearest_user(sample.embedding)
+        nearest = f"{near_name} {near_score:.2f}" if near_name else "nobody registered yet"
+        is_duplicate = near_score is not None and near_score >= self.registry.match_threshold
+        problem = find_photo_problem(sample)
+        if problem is not None:
+            return PhotoLook(problem, sample.describe(), nearest)
+        return PhotoLook(None, sample.describe(), nearest, sample.embedding,
+                         near_name if is_duplicate else None)
+
     def forget_user(self, name: str) -> None:
         """Drop a name off the live tracks the instant it is unregistered, so the label goes away.
 
@@ -173,3 +230,13 @@ class FaceWorker:
 def _box_area(box: list[int]) -> int:
     x1, y1, x2, y2 = box
     return (x2 - x1) * (y2 - y1)
+
+
+def _fit_within(image: np.ndarray, max_side: int) -> np.ndarray:
+    """Shrink an image until its longer side fits, keeping its aspect. Smaller images are untouched."""
+    height, width = image.shape[:2]
+    scale = max_side / max(height, width)
+    if scale >= 1.0:
+        return image
+    return cv2.resize(image, (round(width * scale), round(height * scale)),
+                      interpolation=cv2.INTER_AREA)

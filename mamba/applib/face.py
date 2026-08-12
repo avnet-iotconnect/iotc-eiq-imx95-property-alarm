@@ -100,6 +100,24 @@ def find_quality_problem(sample: FaceSample, consistency: float) -> str | None:
     return None
 
 
+def find_photo_problem(sample: FaceSample) -> str | None:
+    """The same bar as `find_quality_problem`, for an uploaded photograph rather than a live look.
+
+    Same thresholds, minus `consistency` - a still picture has no earlier look to be steady against.
+    The wording describes the file rather than instructing a person, because nobody is standing in
+    front of the camera and the sentence ends up in the dashboard.
+    """
+    if sample.face_pixels < MIN_FACE_PIXELS:
+        return "the face in it is too small"
+    if sample.straightness < MIN_STRAIGHTNESS:
+        return "the face in it is turned away"
+    if sample.detection_score < MIN_DETECTION_SCORE:
+        return "it does not show a whole face"
+    if sample.sharpness < MIN_SHARPNESS:
+        return "it is too blurred"
+    return None
+
+
 class FaceRecognizer:
     """YuNet detect + cv2 align + Neutron SFace embed, run over person tracks."""
 
