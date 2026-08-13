@@ -2,22 +2,18 @@
 
 This demo is Smart Camera with property alarm capabilities running on NXP FRDM-IMX95 with optional Ara240 hardware.
 
-FRDM-IMX95 features 6 Arm CPU cores and a Nueutron NPU which accelerate the AI/ML workloads.
+FRDM-IMX95 features 6 Arm CPU cores and a Neutron NPU which accelerate the AI/ML workloads.
 Optional Ara240 can power the large generative models.
 
-The demo is based in part on the NXPs's 
+The demo is based in part on the NXP's 
 [NXP® eIQ® GenAI Flow Demonstrator Package](https://github.com/nxp-appcodehub/dm-eiq-genai-flow-demonstrator/tree/release/v3.0) 
 version 3.0.
 
 
-# Features
-
-A USB camera attached to the FRDM-IMX95 board is used to detect and recognize people, faces and objects.
-
 # Hardware
 
 - [NXP FRDM-IMX95](https://www.avnet.com/americas/product/nxp/frdm-imx95/evolve-122131125/)
-- (optional) [NXP Ara240](https://www.avnet.com/americas/product/gateworks/gw16168/evolve-216891109?searchTerm=Ara240) (optional)
+- (optional) [NXP Ara240](https://www.avnet.com/americas/product/gateworks/gw16168/evolve-216891109?searchTerm=Ara240)
 - A USB Camera, [Logitech C920x HD Pro PC Webcam](https://www.amazon.com/Logitech-C920x-Pro-HD-Webcam/dp/B085TFF7M1) recommended.
 
 ### Other Optional Devices
@@ -27,6 +23,11 @@ A USB camera attached to the FRDM-IMX95 board is used to detect and recognize pe
 - For best STT performance, we recommend a USB directional microphone like Fifine AM8. PC speakers can then be connected to the 3.5mm headphone jack.
 - The board has a bluetooth receiver. It can be used to connect a bluetooth headphones and/or speaker for TTS feedback.
 
+# Features
+
+A USB camera attached to the FRDM-IMX95 board is used to detect and recognize people, faces and objects. Alerts and intrusions are monitored and reported to /IOTCONNECT.
+
+
 ### AI/ML Features
 
 - YOLO11n running on Neutron NPU detects and tracks people and objects in the camera feed.
@@ -34,9 +35,9 @@ A USB camera attached to the FRDM-IMX95 board is used to detect and recognize pe
 - Voice processing is triggered by NXP  
 [VIT wake word](https://www.nxp.com/design/design-center/software/embedded-software/voice-intelligent-technology-wake-word-and-voice-command-engines) 
 technology - `Hey NXP`. 
-- The board will process Speech-To-Text commands (Whisper, Moonshine on Neutron).
+- The board will process Speech-To-Text commands (moonshine-base on Neutron).
 - The board will provide Text-To-Speech feedback to the user (VITS).
-- A locally running VLM (SmolVLM 500M) can be used to describe the scene and answer questions about the scene.
+- A locally running VLM (SmolVLM 256M) can be used to describe the scene and answer questions about the scene.
 - Ara240 can be used to power a local agent using Qwen 2.5 7B model for natural language interaction.
 
 The NXP models are licensed for use on NXP hardware only and will run for one hour.
@@ -52,30 +53,42 @@ The NXP models are licensed for use on NXP hardware only and will run for one ho
 ### Enhanced Features
 
 - TTS [phoneme mapping](src/config/vocabulary.json) for pronouncing names and words correctly.
-- STT mapping of similarly sounding words [to known commands](src/applib/commands.py). Like TTS ofen interprets "unregister" as "I'm register".
+- STT mapping of similarly sounding words [to known commands](src/applib/commands.py). Like TTS often interprets "unregister" as "I'm register".
 - Face detection threshold - The camera waits until it has a "clear shot" of the face to register the user.
 - YOLO track jitter smoothing - The camera will [smooth the bounding](src/applib/tracking.py) box of a tracked object to reduce jitter.
 
 # Application Behavior
 
 - The camera continuously processes the scene and detects faces and objects.
+- The video streaming will be available on /IOTCONNECT in the **Video Streaming** device tab. 
 - Registered users can be added by adding their face to the local database.
   - People are tracked with bounding box with their name as the label and recognized using the camera feed.
   - A face needs to be recognized only once, and it will be associated with a person being tracked 
 even if their face is no longer visible.
+  - Once a new user is registered, the device will also automatically upload a snapshot of the user to the S3 bucket.
 - An alert can be generated when an unrecognized person enters the camera view or an object is moved or removed from the scene.
-  - During the alert, "*REC" is shown on the screen and the camera regularly snapshots and uploaded to the cloud for later review.
+  - During the alert, "REC" is shown on the screen and the camera regularly snapshots and uploaded to the cloud for later review.
   - An event log is tracked locally and stays on the screen until the user clears the log.
   - The user can generate a full event log report to the cloud.
-- The alarm can be armed or disarmed.
-  - If the alarm is armed, an unrecognized person entering camera view will trigger an alert.
+- The alarm can be armed or disarmed to indicate whether unauthorized and unattended people should trigger an alert.
+  - If the alarm is armed, an unrecognized person entering camera view will trigger an alert, unless a registered user is also in the scene.
   - A few seconds of grace to let the user's face be recognized before triggering an alert.
 - Objects can be locked on the screen and protected from theft whether the alarm is armed or disarmed.
   - If an object is locked it will be tracked on the screen, and if it is moved or removed from the scene, an alert will be generated.
+- Snapshots taken at as result of specific actions and can be seen in the **Telemetry Files** device tab in /IOTCONNECT.
+  - Triggered by requesting a snapshot C2D/Voice/Agent command, taken during alerts
+  - Automatically taken when a new user is registered.
+  - While the system is in alert state, snapshots are taken every several seconds and uploaded to the cloud.
+- One can upload user face images to the S3 bucket as device_uploads/*client_id*/faces/*Person Name*.jpg.
+  - The device will periodically check the S3 bucket for new images and automatically register them to the local database.
+  - Each of files in this directory will be applied only once. 
+The downloade file S3 ETag is kept to avoid duplicate registration of the same image, for example if a user wishes to unregister or re-register using the camera.
+- OSD shows alarm state, Camera FPS(Inference FPS) Inference ms, *REC*ording (alert) status, last alert, reports model loading status, success/status for actions etc.
+- The demo restarts automatically to maintain the 60-minute eIQ license as well as AWS temporary credentials.
 
 # Board Setup
 
-Download L6.18.2-1.0.0_MX95from
+Download L6.18.2-1.0.0_MX95 from the
 [NXP Embedded Linux for i.MX Applications Processors](https://www.nxp.com/design/design-center/software/embedded-software/i-mx-software/embedded-linux-for-i-mx-applications-processors:IMXLINUX) 
 web page. The easiest way is to scroll all the way down to the *Downloads* section
 and Enter `L6.18.2-1.0.0_MX95` into the search box.
@@ -145,7 +158,7 @@ ps -eaf | grep proxy_ara240
 
 ### Download eIQ Neutron SDK (with model converter)
 
-On your PC download the eIQ Neutron SDK **version 3.1.3** from the
+On your PC download the eIQ Neutron SDK **version 3.1.3** exactly from the
 [eIQ® Toolkit for End-to-End Model Development and Deployment](https://www.nxp.com/design/design-center/software/eiq-ai-development-environment/eiq-toolkit-for-end-to-end-model-development-and-deployment:EIQ-TOOLKIT#downloads)
 web page.
 
@@ -184,7 +197,7 @@ An /IOTCONNECT *Device Template* will need to be created or imported.
 
 * Using the left navigation menu, select **Devices** and click the **Device** in this menu.
 * Click **Add Device** button on top-right of the screen.
-* Coose a Device Unique ID (Example: `imx95-01`)
+* Choose a Device Unique ID (Example: `imx95-01`)
 * Pick an Entity to place the device into.
 * Select the Device Template created in the previous step.
 * Choose either the autogenerated certificate or upload your own.
@@ -204,7 +217,7 @@ An /IOTCONNECT *Device Template* will need to be created or imported.
 IMX95=root@192.168.38.203 # your board's IP
 ssh $IMX95 mkdir -p pa
 # Download this file from the /IOTCONNECT portal and copy it to the board.
-scp iotcDeviceConfig.json $TGT:pa/
+scp iotcDeviceConfig.json $IMX95:pa/
 # the app will look for these two fixed names for cert and private key
 # either copy them from the /IOTCONNECT portal or create them on the board (see below)
 scp *-crt.pem $IMX95:pa/device-cert.pem
@@ -223,7 +236,7 @@ cat device-cert.pem
 ```
 
 
-If cloning this repo, you can cpy the application to the board using the following commands instead of downloading the source package.
+If cloning this repo, you can copy the application to the board using the following commands instead of downloading the source package.
 ```bash
 IMX95=root@192.168.38.203 # your board's IP
 scp -r src/* $IMX95:pa/
@@ -259,7 +272,7 @@ cd ~/pa/connector
 - When you have no sound device plugged in, "Hey NXP" trigger and command responses may appear to be delayed.
 Use the `--no-tts` flag to bypass TTS processing and improve visual feedback time.
 
-- The demo will default to the USB audio. If you don't want audio to be detected, run the demo with the 3.5mm jack sound device `./run.sh --mic micfilaudio` with no microphone plugged in.
+- The demo will default to the USB audio. If you don't want audio to be detected, run the demo with the 3.5mm jack sound device `./run.sh --mic micfil` with no microphone plugged in.
 
 - If a demo abruptly power cycles the board, the most likely issue is power delivery.
 Plug the board into a high power USB port, using the cable supplied with the board or 
@@ -270,11 +283,18 @@ The best solution is power the board (power button or re-plug USB power)
 **while the USB camera is plugged in**. If a board is running, issue a `poweroff` to cleanly shutdown. 
 
 - FPS is lower at times:
-Teh FPS fluctuation on the screen is normal as we periodically read faces on the screen (every Nth frame). 
+The FPS fluctuation on the screen is normal as we periodically read faces on the screen (every Nth frame). 
 Additionally, for the first minute or so, loading the models will consume more system resources and slow FPS down.
 Depending on the camera, in low lighting conditions camera exposure may affect FPS.
 Camera may keep the shutter open for longer in order to absorb more light.
 
 - 3.5mm jack audio may not recognize the first syllable correctly. The audio driver seems to have a problem with a "pop" sound as it starts the sound recording.
 You could use a USB microphone instead.
+
+
+# License
+
+Avnet code: [LICENSE.md](LICENSE.md)
+NXP code: [LICENSE_NXP.txt](LICENSE_NXP.txt)
+other licenses: [licenses/](licenses/)
 
