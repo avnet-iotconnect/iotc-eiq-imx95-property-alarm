@@ -226,16 +226,21 @@ class Overlay:
         ]
 
     def _timing_text(self) -> str:
-        """`30(50) 33ms` - what the demo is doing, what the frame loop's models could do, per frame.
+        """`24(37) 27ms` - the rate you are getting, and the rate the models alone could hold.
 
-        The braced number is `inference_ms` read back as a frame rate, and it is a **sequential**
-        budget: 20 ms of YOLO is (50), so it can never read worse than the rate beside it. The gap
-        between the two is the headroom left for another model on this thread, which is the question
-        it is here to answer. Whole milliseconds - the tenths moved with every frame and meant
-        nothing, since both figures are already averaged over sixty of them.
+        Only the first number is what the demo is *doing*; the other two are one measurement said
+        twice, `inference_ms` as a rate and as itself. The frame time is deliberately not here: it
+        is 1000 divided by the first number, so putting it on the line as well made three figures of
+        which two were the same fact, and every reader attached the milliseconds to the braced rate
+        instead of to the rate it belongs to.
+
+        The braced figure is a **sequential** budget - 27 ms of YOLO is (37) - so it can never read
+        worse than the rate beside it, and the gap between the two is what the camera is costing.
+        Whole milliseconds: the tenths moved every frame and said nothing, since both are already
+        averaged over sixty of them.
         """
         return (f"{_fps(self.end_to_end_ms):.0f}({_fps(self.inference_ms):.0f})"
-                f" {self.end_to_end_ms:.0f}ms")
+                f" {self.inference_ms:.0f}ms")
 
     def _draw_hud(self, context: cairo.Context) -> None:
         context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
