@@ -1,2 +1,0 @@
-strands-agents==1.50.2
-openai==2.52.0

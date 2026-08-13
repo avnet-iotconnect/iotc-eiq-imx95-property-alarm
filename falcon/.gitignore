@@ -1,8 +1,0 @@
-# NXP's payload -- proprietary, 139 MB, fetched by scripts/local-setup.sh. Never committed.
-/nxp-lib/
-
-# SmolVLM weights, pulled from Hugging Face on first run
-/models/
-
-# The board's virtualenv
-/venv/
