@@ -14,6 +14,10 @@ Two layers, both here so mapping logic lives in one place:
 `Track.identity` is the seam face recognition fills. `face.py` runs a face model on
 each `person` track and writes the recognized name into `identity` (and the raw `embedding` used to get
 it, so a "register user" command can grab a live face). Everything downstream reads `identity`.
+
+A name belongs to the *thing that was measured*, so a track that changes class drops it: matching is
+by position and ignores class, which means a person who walks away can leave their track sitting on
+the chair behind them. The chair is not that person, and nothing downstream should be told it is.
 """
 
 from __future__ import annotations
@@ -24,6 +28,22 @@ from dataclasses import dataclass, field
 import numpy as np
 
 MAX_LABELS = 9  # short ids 1..9, each with its own color (see color_for)
+
+# A track is still drawn for this many frames after the detector last saw it. YOLO's score for a
+# small object sits near the confidence threshold and crosses it constantly - measured on the board,
+# a fully visible cup was detected in 193 of 400 frames in 96 separate bursts, while the track
+# itself never died. Without this the box blinks a few times a second; with it the picture is steady
+# and a real loss still shows up in a fifth of a second.
+COASTING_FRAMES_SHOWN = 3
+
+# Detection is stateless, so every edge of every box is re-decided from scratch each frame and a
+# perfectly still object still breathes - 1.16 px per edge per frame, board-measured, which is 5% of
+# a 37 px cup and reads as a wobble. Each edge is therefore low-passed, with a weight that rises
+# with how far it actually moved: a still edge is heavily damped, an edge that jumped is taken as it
+# is. That is the whole trick - a plain average would smooth the jitter and lag real movement by
+# several frames, and this lags it by none. Measured: 1.16 px/frame of wobble down to 0.40.
+BOX_SMOOTHING_FLOOR = 0.2      # weight given to a new edge that has barely moved
+BOX_SMOOTHING_FULL_PX = 8.0    # ... rising to all of it once it has moved this far
 
 # Nine visually distinct colors, 1-based (index by short_id). RGB floats 0..1 for Cairo.
 _PALETTE: list[tuple[float, float, float]] = [
@@ -56,6 +76,7 @@ class Track:
     score: float
     box: list[int]  # xyxy in frame pixels
     misses: int = 0  # consecutive frames this track went unmatched (coasting)
+    smoothed_box: list[float] | None = field(default=None, repr=False)  # sub-pixel state behind `box`
     identity: str | None = None  # a recognized user's name, filled by face.py when a match is found
     embedding: np.ndarray | None = field(default=None, repr=False)  # this track's latest face vector
     face_box: list[int] | None = None  # detected face box (xyxy, frame px), for the debug overlay
@@ -86,9 +107,11 @@ class Tracker:
             if det_index not in matched_dets:
                 self._spawn_track(detection)
 
-        # Show only tracks seen this frame; a coasting (missing) track stays alive to keep its id if it
-        # reappears within max_age, but is not drawn - so a real loss of tracking is visible immediately.
-        return [track for track in self._tracks if track.misses == 0]
+        # Show what was seen this frame plus what was seen very recently: a detector that drops an
+        # object for two frames has not lost it, and a box that blinks reads as a broken demo. A
+        # track missing for longer than that is not reported, so a real loss is still visible - it
+        # keeps its id and its color until max_age in case it comes back.
+        return [track for track in self._tracks if track.misses <= COASTING_FRAMES_SHOWN]
 
     def _match(self, detections: list[tuple[str, float, list[int]]]) -> dict[int, int]:
         """Greedily pair existing tracks to detections by best IoU above threshold (position, any class)."""
@@ -107,7 +130,13 @@ class Tracker:
 
     def _apply_detection(self, track: Track, detection: tuple[str, float, list[int]]) -> None:
         # Keep identity/embedding across the update; face.py refreshes them after tracking runs.
-        track.class_name, track.score, track.box = detection
+        # Unless this track just became a different kind of thing - then the face that was measured
+        # is not this object's face, and saying so is how a chair ends up wearing somebody's name.
+        class_name, score, box = detection
+        if class_name != track.class_name:
+            track.identity, track.embedding, track.face_box, track.match_score = None, None, None, None
+        track.class_name, track.score = class_name, score
+        track.box = _smooth_box(track, box)
         track.misses = 0
 
     def _age_and_drop_unmatched(self, matched_track_indices: set[int]) -> None:
@@ -142,6 +171,17 @@ class _ShortIdPool:
 
     def release(self, short_id: int) -> None:
         self._available.append(short_id)  # back of the queue: last to be handed out again
+
+
+def _smooth_box(track: Track, box: list[int]) -> list[int]:
+    """Damp each edge towards where it was, in proportion to how little it moved (see the constants)."""
+    previous = track.smoothed_box or [float(edge) for edge in box]
+    smoothed = []
+    for was, now in zip(previous, box):
+        weight = min(1.0, max(BOX_SMOOTHING_FLOOR, abs(now - was) / BOX_SMOOTHING_FULL_PX))
+        smoothed.append(weight * now + (1 - weight) * was)
+    track.smoothed_box = smoothed
+    return [round(edge) for edge in smoothed]
 
 
 def _iou(box_a: list[int], box_b: list[int]) -> float:

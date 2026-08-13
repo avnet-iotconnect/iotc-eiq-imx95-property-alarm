@@ -114,14 +114,28 @@ class FaceWorker:
         self._future = self._executor.submit(self._run, frame, snapshot)
 
     def apply(self, tracks: list[Track]) -> None:
-        """Write the latest cycle's results onto the live tracks (fast, main thread, every frame)."""
+        """Write the latest cycle's results onto the live tracks (fast, main thread, every frame).
+
+        **Only a person carries a name.** Tracking matches by position and ignores class, so a
+        person who steps out of shot can leave their track on the chair behind them - and a cycle
+        only runs while at least one person track exists, so nothing would ever come back to correct
+        it. The name is dropped here, and forgotten, the moment the track stops being a person.
+        """
         with self._lock:
             identities, samples = self._identities, self._samples
+        departed = {track.track_id for track in tracks if track.class_name != "person"} & set(identities)
         for track in tracks:
+            if track.class_name != "person":
+                track.identity, track.match_score, track.face_box, track.embedding = None, None, None, None
+                continue
             track.identity, track.match_score = identities.get(track.track_id, (None, None))
             sample = samples.get(track.track_id)
             track.face_box = sample.face_box if sample else None
             track.embedding = sample.embedding if sample else None
+        if departed:
+            with self._lock:
+                self._identities = {track_id: identity for track_id, identity in self._identities.items()
+                                    if track_id not in departed}
 
     def try_register_user(self, name: str, tracks: list[Track]) -> Registration:
         """Bind `name` to the largest person on screen - but only if this was a good look at them.
