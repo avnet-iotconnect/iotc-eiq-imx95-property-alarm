@@ -20,6 +20,11 @@ this thread until the command finishes - deliberately: we are not listening for 
 the answer is still being worked out, and `describe scene` takes tens of seconds. The video loop is
 untouched throughout, which is the only deadline that matters.
 
+`--no-tts` (`is_speaking=False`) removes the last two of those steps and the model behind them. It is
+for the booth with no speaker plugged in, where every spoken word is dead air the person is waiting
+through - and they wait for it *before* the command runs, since the transcript is read back first.
+The demo still answers; it answers on the screen. See `speak`.
+
 **Everything is loaded on this thread, not before it.** Startup is ~8 s of `import torch` plus ~6 s
 of decrypting models, and doing that before the camera starts would mean fifteen seconds of black
 screen at a trade show. Instead the video comes up immediately and the HUD says `voice: loading`
@@ -60,6 +65,7 @@ class VoiceLoop:
         self, payload: Path, audio_config: AudioConfig, on_command: Callable[[str], str],
         on_status: Callable[[str], None] | None = None, speaker_id: int = 24,
         wake_timeout_s: float = 3.0, command_seconds: float = 6.0, is_repeating: bool = True,
+        is_speaking: bool = True,
     ) -> None:
         self.payload = payload
         self.audio_config = audio_config
@@ -69,6 +75,7 @@ class VoiceLoop:
         self.wake_timeout_s = wake_timeout_s
         self.command_seconds = command_seconds
         self.is_repeating = is_repeating
+        self.is_speaking = is_speaking
 
         self._stop = Event()
         self._speak_lock = Lock()  # command results and loop prompts can both want the speaker
@@ -95,7 +102,17 @@ class VoiceLoop:
         Names and acronyms are respelled on the way in - espeak-ng reads "Marija" as "ma-RID-zha"
         and "NXP" as a word. `mqs` has no hardware volume control, so digital gain is the only
         loudness lever there is.
+
+        Under `--no-tts` this is where the whole speaking half of the demo stops: the sentence is
+        printed and nothing is synthesised or played. Every answer still exists - the screen flashes
+        it (see `main.show_action`) and the dashboard receives it - so what is lost is only the
+        audio, and what is gained is the seconds it took to make and play it. That matters most
+        where it is least obvious: the transcript is read *back* before the command runs, so with a
+        speaker nobody can hear, "Hey NXP" and the command that followed it both look ignored.
         """
+        if not self.is_speaking:
+            print(f"[voice] (tts off, would say) {text}")
+            return
         if self._synthesiser is None:
             print(f"[voice] (not loaded yet, would say) {text}")
             return
@@ -257,8 +274,6 @@ class VoiceLoop:
         from audio_manager.audio_manager_base import ReaderConfig
         from speech_to_text.speech_to_text import SpeechToText
         from speech_to_text.vad import VAD
-        from tts.config import MultiSpeakerTTS16kHzQuantConfig
-        from tts.model import TextToSpeech
         from vit.vit import VIT
         import torch
         self._torch = torch
@@ -270,9 +285,10 @@ class VoiceLoop:
         self._recogniser = _timed("moonshine-base", lambda: SpeechToText(
             "moonshine-base", language="English", task="transcribe"))
         self._voice_activity = _timed("VAD (silero)", VAD)
-        tts_config = MultiSpeakerTTS16kHzQuantConfig(speaker_id=self.speaker_id)
-        self._synthesiser = _timed("TTS", lambda: TextToSpeech(tts_config))
-        self._samplerate = tts_config.samplerate
+        if self.is_speaking:
+            self._load_tts()
+        else:
+            print("[voice] TTS off: answers go to the screen and the dashboard, not to the speaker")
         self._vocabulary = _timed("vocabulary (espeak phonemes)", vocabulary.load_vocabulary)
         self._audio = _timed("audio pipeline", self._create_audio)
 
@@ -284,6 +300,19 @@ class VoiceLoop:
         self._audio.start_capture()
         self._wake_reader.enable(sync_to_current=True)
         print(f"[voice] ready in {perf_counter() - started:.1f}s -- say \"{WAKE_WORD}\"")
+
+    def _load_tts(self) -> None:
+        """The synthesiser, its imports included - so `--no-tts` costs nothing at all, not even them.
+
+        This is one of the four models that decrypt on load, and the only one the demo can do
+        without: everything else here is *listening*, which is the half that has no substitute.
+        """
+        from tts.config import MultiSpeakerTTS16kHzQuantConfig
+        from tts.model import TextToSpeech
+
+        tts_config = MultiSpeakerTTS16kHzQuantConfig(speaker_id=self.speaker_id)
+        self._synthesiser = _timed("TTS", lambda: TextToSpeech(tts_config))
+        self._samplerate = tts_config.samplerate
 
     def _create_audio(self):
         """NXP's audio manager on the GStreamer backend, with the mixer already turned up.

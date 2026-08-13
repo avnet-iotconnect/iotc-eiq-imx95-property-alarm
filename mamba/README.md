@@ -458,13 +458,19 @@ happens after the camera is already running, so the picture is live in about a s
 `voice:` line tells you when the ears are ready. Nothing in eIQ touches Neutron, so the YOLO and
 SFace offload is what buys the voice stack its CPU.
 
+**`--no-tts` turns the speaking half off** and does not load the synthesiser at all. It is for the
+booth with no speaker plugged in, where every answer is dead air somebody waits through — and they
+wait for it *before* the command runs, since the demo reads the transcript back first. With the flag
+the answer still arrives, on the screen (§ the two-second flash) and on the dashboard. `--no-repeat`
+is the narrower version: it drops the read-back and keeps the spoken answer.
+
 ## Alarm
 
 Three flags, not one state — `app/watchdog.py`, and it is worth reading:
 
 | flag | what it means | on screen |
 |---|---|---|
-| **arming** | your own switch, and *only* that. Persisted, so an hourly restart comes back armed if you left it armed | `alarm: ARMED` |
+| **arming** | your own switch, and *only* that. Persisted, so an hourly restart comes back armed if you left it armed | `ARMED` |
 | **alert** | the event log is not empty. There is no second flag — an alert *is* a log with something in it | `alert: the laptop was moved, 30 seconds ago` |
 | **recording** | a *timed* flag: a screenshot to the cloud every 3 s, lasting 5 s past whatever last refreshed it | **REC** in the corner |
 
@@ -576,6 +582,7 @@ Useful ways to run it:
 
 ```bash
 ./run.sh --no-voice                            # video only: no eIQ payload, no pip packages needed
+./run.sh --no-tts                              # listens, but answers on the screen only - no speaker
 ./run.sh --no-agent                            # no LLM; 'agent' then refuses politely
 ./run.sh --ara-url http://<other-board>:3000/v1  # the connector somewhere else
 ./run.sh --no-iotc                             # no cloud, same as having no credentials here

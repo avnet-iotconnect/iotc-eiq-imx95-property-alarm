@@ -24,6 +24,18 @@ from applib.tracking import Track, color_for
 ACTION_MESSAGE_S = 2.0
 ACTION_MAX_CHARS = 46
 
+# Where the HUD starts. The top offset is deliberately twice the left margin: a person detected at
+# the top of the frame has their label drawn just above their box, which lands in the same corner,
+# and one of the two has to give way. The HUD is the one that can afford to.
+HUD_MARGIN_X = 10
+HUD_TOP_Y = 48
+HUD_LINE_HEIGHT = 22
+HUD_SEGMENT_GAP = 14  # between two differently-coloured pieces of one line (ARMED and the fps)
+
+# A line of HUD text may be several pieces in different colours - `ARMED` in the alarm's own colour
+# beside the frame rate in yellow. One type for both, so a one-colour line is a list of one.
+HudSegment = tuple[str, tuple[float, float, float]]
+
 
 class AlarmState(Enum):
     """The alarm is a *switch*, and these are its two positions (label + HUD color, RGB 0..1).
@@ -46,10 +58,9 @@ class AlarmState(Enum):
 class Overlay:
     """Holds the latest tracks/state/timing and paints them onto each preview frame."""
 
-    def __init__(self, frame_width: int, frame_height: int, backend: str) -> None:
+    def __init__(self, frame_width: int, frame_height: int) -> None:
         self.frame_width = frame_width
         self.frame_height = frame_height
-        self.backend = backend
         self.tracks: list[Track] = []
         self.alarm_state = AlarmState.DISARMED
         self.locked_objects: list[str] = []
@@ -103,6 +114,12 @@ class Overlay:
         self.agent_status = status
 
     def set_timing(self, inference_ms: float, end_to_end_ms: float) -> None:
+        """Both already averaged over the last sixty frames - `main.py` owns the window, not this.
+
+        `inference_ms` is what the frame loop ran *in order*, which today is YOLO. The face pass is
+        on its own thread and a spare core, so it is concurrent with this loop rather than behind
+        it, and counting it here would report more work per frame than a frame has room for.
+        """
         self.inference_ms = inference_ms
         self.end_to_end_ms = end_to_end_ms
 
@@ -141,7 +158,7 @@ class Overlay:
         self.action_until = monotonic() + ACTION_MESSAGE_S
 
     def draw(self, context: cairo.Context) -> None:
-        """The cairooverlay `draw` callback: paint boxes, the HUD, and the alarm banner if armed-tripped."""
+        """The cairooverlay `draw` callback: boxes, the HUD, REC, and whatever is flashing at the bottom."""
         self._draw_boxes(context)
         self._draw_hud(context)
         if self.is_recording:
@@ -184,30 +201,50 @@ class Overlay:
             return f"{tag} face (no users)"                     # face detected but nobody registered yet
         return f"{tag} {track.class_name} {track.score:.2f}"
 
-    def get_hud_lines(self) -> list[tuple[str, tuple[float, float, float]]]:
-        """The HUD as (text, color) pairs, so Cairo and the JPEG snapshot draw the same thing.
+    def get_hud_lines(self) -> list[list[HudSegment]]:
+        """The HUD as lines of coloured segments, so Cairo and the JPEG snapshot draw the same thing.
 
-        The `alert` line is always here, even empty: a HUD whose lines move about is one nobody can
-        read at a glance, and "alert: -" is itself the answer to "has anything happened?".
+        **The alert is first, and it is there only when there is one** - in red, with no label in
+        front of it. A red sentence at the top of the screen is already unmistakably an alert, and
+        an "alert: -" that is present nine hundred and ninety-nine frames out of a thousand teaches
+        whoever is watching to stop reading the top line. The rest of the HUD moves up a line when
+        nothing has happened, which is the price and it is worth paying.
+
+        The alarm is the bare word, in its own colour: this HUD used to say "alarm: ARMED", and the
+        label carries the noun better than the prefix did. The frame rate rides on the same line, in
+        yellow, because it is a number you check rather than read.
         """
         yellow, cyan, red = (1.0, 1.0, 0.0), (0.15, 0.90, 0.90), (1.0, 0.25, 0.25)
-        return [
-            (self.backend, yellow),
-            (f"end-to-end: {_fps(self.end_to_end_ms):5.0f} fps  ({self.end_to_end_ms:4.1f} ms)", yellow),
-            (f"alarm: {self.alarm_state.label}", self.alarm_state.color),
-            (f"alert: {self.alert_text or '-'}", red if self.alert_text else yellow),
-            (f"locked: {', '.join(self.locked_objects) or '-'}", yellow),
-            (self.voice_status, cyan),
-            (self.cloud_status, cyan),
-            (self.stream_status, cyan),
-            (self.agent_status, cyan),
+        alert = [[(self.alert_text, red)]] if self.alert_text else []
+        return alert + [
+            [(self.alarm_state.label, self.alarm_state.color), (self._timing_text(), yellow)],
+            [(f"locked: {', '.join(self.locked_objects) or '-'}", yellow)],
+            [(self.voice_status, cyan)],
+            [(self.cloud_status, cyan)],
+            [(self.stream_status, cyan)],
+            [(self.agent_status, cyan)],
         ]
+
+    def _timing_text(self) -> str:
+        """`30(50) 33ms` - what the demo is doing, what the frame loop's models could do, per frame.
+
+        The braced number is `inference_ms` read back as a frame rate, and it is a **sequential**
+        budget: 20 ms of YOLO is (50), so it can never read worse than the rate beside it. The gap
+        between the two is the headroom left for another model on this thread, which is the question
+        it is here to answer. Whole milliseconds - the tenths moved with every frame and meant
+        nothing, since both figures are already averaged over sixty of them.
+        """
+        return (f"{_fps(self.end_to_end_ms):.0f}({_fps(self.inference_ms):.0f})"
+                f" {self.end_to_end_ms:.0f}ms")
 
     def _draw_hud(self, context: cairo.Context) -> None:
         context.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         context.set_font_size(18)
-        for index, (text, color) in enumerate(self.get_hud_lines()):
-            _draw_text(context, text, 10, 24 + index * 22, color)
+        for index, segments in enumerate(self.get_hud_lines()):
+            x = HUD_MARGIN_X
+            for text, color in segments:
+                _draw_text(context, text, x, HUD_TOP_Y + index * HUD_LINE_HEIGHT, color)
+                x += context.text_extents(text).x_advance + HUD_SEGMENT_GAP
 
     def _draw_countdown(self, context: cairo.Context) -> None:
         """'Registering Nick - look at the camera  2', centered along the bottom while it runs.
@@ -291,12 +328,16 @@ def annotate_frame(frame_rgb, tracks: list[Track], hud_lines=()):
         label = f"{track.identity or track.class_name}"
         cv2.putText(annotated, label, (x1 + 2, max(y1 - 6, 12)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, bgr, 1, cv2.LINE_AA)
-    for index, (text, (red, green, blue)) in enumerate(hud_lines):
-        origin = (10, 20 + index * 18)
-        cv2.putText(annotated, text, (origin[0] + 1, origin[1] + 1),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2, cv2.LINE_AA)  # shadow, as in Cairo
-        cv2.putText(annotated, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                    (int(blue * 255), int(green * 255), int(red * 255)), 1, cv2.LINE_AA)
+    for index, segments in enumerate(hud_lines):
+        x = 10
+        for text, (red, green, blue) in segments:
+            origin = (x, 40 + index * 18)
+            cv2.putText(annotated, text, (origin[0] + 1, origin[1] + 1),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2, cv2.LINE_AA)  # shadow, as in Cairo
+            cv2.putText(annotated, text, origin, cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (int(blue * 255), int(green * 255), int(red * 255)), 1, cv2.LINE_AA)
+            (width, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+            x += width + 10
     return annotated
 
 

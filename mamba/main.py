@@ -17,6 +17,7 @@ plugged in. See `applib/camera_devices.py`.
     ./run.sh --no-webrtc                       # everything except the live video
     ./run.sh --no-iotc                         # no cloud at all - the only way to run without it
     ./run.sh --no-voice                        # just the video loop, no eIQ payload needed
+    ./run.sh --no-tts                          # listens, answers on the screen only - no speaker
     ./run.sh --model models/yolo11n_int8.tflite  # full-CPU baseline
 
 Say "Hey NXP", wait for the blip, then one of:
@@ -64,6 +65,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections import deque
 from pathlib import Path
 from threading import Event, Timer
 from time import perf_counter, sleep
@@ -103,6 +105,10 @@ FACES = Path(__file__).resolve().parent / "faces"     # photographs downloaded f
 VERSION = "1.1.0"       # reported as the 'version' telemetry attribute
 FPS_REPORT_FRAMES = 15  # how often the frame loop refreshes the fps it tells the cloud
 RESTART_DELAY_S = 3.0   # a restart waits this long, so its C2D ack reaches the cloud first
+# How many frames the fps and the frame time on the HUD are averaged over. Two seconds' worth: a
+# single frame's total swings by several milliseconds with whatever else the board is doing, and a
+# number that flickers between 26 and 31 is one nobody can read - or compare against yesterday's.
+TIMING_WINDOW_FRAMES = 60
 # Commands whose answer is prose, arriving tens of seconds after anyone asked for it. See show_action.
 SLOW_ANSWER_VERBS = {commands.AGENT, commands.DESCRIBE_SCENE}
 
@@ -133,6 +139,9 @@ def run_loop(
     text_commands: TextCommandFile | None, max_frames: int, log_every: int, stop_event: Event,
 ) -> None:
     steady_state: list[dict[str, float]] = []
+    # (inference, end-to-end) for the last TIMING_WINDOW_FRAMES frames - what the HUD and the cloud
+    # are told. Separate from `steady_state`, which is every frame of the run and is the exit report.
+    recent_ms: deque[tuple[float, float]] = deque(maxlen=TIMING_WINDOW_FRAMES)
     frame_index = 0
     while max_frames == 0 or frame_index < max_frames:
         if stop_event.is_set():  # the restart command, or the --restart-after timer
@@ -164,9 +173,17 @@ def run_loop(
             "track": (after_track - after_inference) * 1000,
             "app": (perf_counter() - after_track) * 1000,
         }
-        overlay.set_timing(stage_ms["inference"], sum(stage_ms.values()))
+        # Only what this thread ran, in order: the braced figure on the HUD is a *sequential* budget,
+        # so it can never be worse than the end-to-end rate beside it. The face pass is deliberately
+        # not in it - it is ~66 ms every 200 ms on its own thread and a spare core, concurrent with
+        # this loop rather than behind it, so adding it in claimed 47 ms of work per 33 ms frame.
+        # If face recognition ever moves onto this thread, it belongs here and nowhere else.
+        recent_ms.append((stage_ms["inference"], sum(stage_ms.values())))
+        mean_inference = sum(inference for inference, _ in recent_ms) / len(recent_ms)
+        mean_total = sum(total for _, total in recent_ms) / len(recent_ms)
+        overlay.set_timing(mean_inference, mean_total)
         if frame_index % FPS_REPORT_FRAMES == 0:  # twice a second is plenty for a dashboard
-            telemetry.set(fps=round(1000 / max(sum(stage_ms.values()), 0.001), 1))
+            telemetry.set(fps=round(1000 / max(mean_total, 0.001), 1))
         if log_every and frame_index % log_every == 0:
             report_frame(frame_index, tracks, stage_ms)
         if frame_index >= 1:  # frame 0 is warm-up
@@ -229,6 +246,10 @@ def parse_args() -> argparse.Namespace:
 
     voice = parser.add_argument_group("voice")
     voice.add_argument("--no-voice", action="store_true", help="run the video loop only, no eIQ payload")
+    voice.add_argument("--no-tts", action="store_true",
+                       help="listen, but never speak: no synthesis, no playback of answers. With no "
+                            "speaker plugged in, the wake word and every command appear delayed by the "
+                            "audio nobody can hear; this makes the screen the answer instead")
     voice.add_argument("--mic",
                        help="capture device, overriding audio.json ('auto', alias, substring, or ALSA name)")
     voice.add_argument("--speaker", help="playback device, overriding audio.json")
@@ -342,7 +363,7 @@ def main() -> None:
     registry = Registry(args.db)
     face_worker = FaceWorker(face, registry, args.face_interval)
     tracker = Tracker()
-    overlay = Overlay(args.width, args.height, backend="NPU" if use_neutron else "CPU")
+    overlay = Overlay(args.width, args.height)
     state = SessionState(args.state)
     # The watchdog is the alarm's memory: what has happened (the event log) and what has been
     # disturbed (the object guard, which owns the locked objects' anchors). `app.py` reads three
@@ -402,7 +423,7 @@ def main() -> None:
             on_command=lambda text: service.submit(text, source="voice").result().message,
             on_status=overlay.set_voice_status, speaker_id=args.tts_voice,
             wake_timeout_s=args.wake_timeout, command_seconds=args.command_seconds,
-            is_repeating=not args.no_repeat,
+            is_repeating=not args.no_repeat, is_speaking=not args.no_tts,
         )
     else:
         overlay.set_voice_status("voice: off")

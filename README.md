@@ -154,8 +154,8 @@ PP-OCRv3 text detection + CRNN_EN text recognition, both from opencv_zoo, run th
 
 # Tips, FAQ and Troubleshooting
 
-- When you have no sound device plugged in, the commands and "Hey NXP" trigger may appear to be delayed. Use the '--no-tts' flag to bypass TTS processing
-and improve visual feedback time.
+- When you have no sound device plugged in, "Hey NXP" trigger and command responses may appear to be delayed.
+Use the `--no-tts` flag to bypass TTS processing and improve visual feedback time.
 
 - The demo will default to the USB audio. If you don't want audio to be detected, run the demo with the 3.5mm jack sound device `./run.sh --mic micfilaudio` with no microphone plugged in.
 
