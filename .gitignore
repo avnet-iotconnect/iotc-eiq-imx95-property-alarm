@@ -25,3 +25,8 @@
 dm-eiq-genai-flow-demonstrator/
 *.tgz
 *.zip
+
+# Prevent accidental upload of device configuration
+*.pem
+iotcDeviceConfig.json
+

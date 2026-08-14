@@ -151,7 +151,10 @@ scp ~/Downloads/rt-sdk-ara2_2.0.4.deb $IMX95:
 ssh $IMX95 dpkg -i ./rt-sdk-ara2_2.0.4.deb
 ```
 
-soft reboot the board by issuing the `reboot` command on the ssh terminal.
+At this point, the board must be restarted by issuing the `reboot` command on the ssh terminal.
+```bash
+ssh $IMX95 dpkg -i ./rt-sdk-ara2_2.0.4.deb
+```
 
 To check that everything is working, run the following command on the board:
 ```
