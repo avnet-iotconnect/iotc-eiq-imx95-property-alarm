@@ -1,0 +1,32 @@
+# Jetbrains IDEs
+.idea/
+
+# temp work files
+/work*/
+
+# python-related
+*/__pycache__/
+*.pyc
+.venv/
+/venv/
+
+
+# conversion artifacts:
+/*.npy
+/*.pt
+/*.onnx
+/*.tflite
+/*_saved_model/
+
+# eIQ payload: fetched by scripts/local-setup.sh, never committed
+/nxp-lib/
+
+# When making the eiq demo tarball:
+dm-eiq-genai-flow-demonstrator/
+*.tgz
+*.zip
+
+# Prevent accidental upload of device configuration
+*.pem
+iotcDeviceConfig.json
+
