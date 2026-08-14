@@ -19,8 +19,8 @@ in `watchdog.py`, next door.
 **Deciding when the alarm has a reason is `watchdog.py`'s job, not this file's.** `on_frame` hands
 it the frame's tracks and then reads three flags back - armed, alert, recording - and paints them.
 The split is by how the code reads: a command is a straight line from a sentence to an answer, and
-the watchdog is a clock-driven state machine. Mixing them was what made koala's alarm hard to
-follow.
+the watchdog is a clock-driven state machine. Mixing them is what made an earlier version of this
+alarm hard to follow.
 
 **The cloud is not a collaborator here.** `iotc.py` is nowhere in this file. What the dashboard
 needs is *written* into `telemetry.TelemetryState` - a plain dict behind a lock - and the

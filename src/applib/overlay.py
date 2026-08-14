@@ -43,7 +43,7 @@ class AlarmState(Enum):
     There is deliberately no third "ALARM" state. What the alarm has *caught* is the alert (a
     non-empty event log) and whether something is happening right now is the recording - two other
     things entirely, shown as their own HUD line and as REC in the corner. Collapsing all three into
-    one red word is what made koala's screen impossible to read: a recognised user could be standing
+    one red word is what made an earlier screen impossible to read: a recognised user could be standing
     in front of a camera that still said ALARM, with nothing on the screen saying why.
     """
 

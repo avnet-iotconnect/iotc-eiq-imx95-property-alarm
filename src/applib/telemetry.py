@@ -19,7 +19,7 @@ and one nudge:
 `wait_for_wake(timeout)` is the publisher's sleep: it returns early when someone calls `wake()`, so
 the 4-second cadence costs nothing and an interesting event still arrives in the dashboard at once.
 
-Deliberately stdlib-only and cloud-free: `app.py` imports this, and the video half of the pilot has
+Deliberately stdlib-only and cloud-free: `app.py` imports this, and the video half of the demo has
 to keep running with the /IOTCONNECT SDK not installed at all.
 """
 

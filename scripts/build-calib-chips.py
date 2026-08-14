@@ -12,7 +12,7 @@ Writes files/sface-calib/*.png plus a README naming every source. Two things mat
   demo's camera sees (~90 px) *before* alignment, so the calibration chips carry camera-like detail
   rather than magazine detail. Quantization ranges should come from the data the model will meet.
 
-    .venv/bin/python work/build-calib-chips.py
+    .venv/bin/python scripts/build-calib-chips.py
 """
 
 from __future__ import annotations

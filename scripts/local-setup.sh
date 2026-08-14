@@ -6,10 +6,10 @@
 #   source .venv/bin/activate && scripts/local-setup.sh
 #
 # Activate your venv first -- this adds a .pth to it and will not create one for you. Install
-# falcon/requirements.txt yourself if you want the third-party imports to resolve too.
+# src/requirements.txt yourself if you want the third-party imports to resolve too.
 #
 # Nothing here runs on a PC: the payload's .so files are cpython-313-aarch64 and only load on the
-# board. This is for reading and navigating. To run anything, see falcon/README.md.
+# board. This is for reading and navigating. To run anything on the board, see the top-level README.md.
 
 set -euo pipefail
 cd "$(dirname "$(readlink -f "$0")")/.."

@@ -5,9 +5,10 @@
 separate file, because the two read very differently. A command is a straight line from a sentence
 to an answer. This is a state machine driven by a clock.
 
-**Three flags, not one state.** koala had a single ALARM state that was simply "armed and a stranger
-is on screen this instant", so it flickered with YOLO and forgot everything the moment the stranger
-stepped out of shot. The redesign splits that into three things that change independently:
+**Three flags, not one state.** This started out as a single ALARM state that was simply "armed and
+a stranger is on screen this instant", so it flickered with YOLO and forgot everything the moment
+the stranger stepped out of shot. The redesign splits that into three things that change
+independently:
 
     arming     the user's own switch, and *only* that (`state.is_armed`, on disk so that it survives
                the restart, and disarmed until somebody arms it). "Alarm" here means the switch - it

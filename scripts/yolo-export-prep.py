@@ -5,7 +5,7 @@ Stock `yolo export ... int8` bakes the YOLO box decode (DFL softmax + anchor ari
 quantized graph. That decode does not survive int8: the box coordinates collapse to ~0 (while class
 scores are fine). This is the well-known YOLO-on-NPU problem, and the standard fix is to NOT quantize
 the decode: let the NPU run the conv backbone (which quantizes beautifully) and emit the head's RAW
-tensors, then do the cheap DFL/anchor/sigmoid decode in float on the CPU (see dolphin/yolo.py).
+tensors, then do the cheap DFL/anchor/sigmoid decode in float on the CPU (see src/applib/yolo.py).
 
 So we patch the Detect head to output its raw pre-decode tensors, concatenated as
 (batch, 4*reg_max + num_classes, num_boxes) = (1, 64 + 80, 2100) for yolo11n at imgsz 320:

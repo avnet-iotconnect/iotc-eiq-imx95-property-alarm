@@ -67,8 +67,8 @@ The connector emits tool calls with no `id` and no `type`, uses `choice.index` a
 and omits `finish_reason` on non-streaming responses. An OpenAI client cannot then tie a tool
 *result* to the *call* that produced it, so it discards the call and the model reissues it forever —
 strands-agents logs `incomplete tool use block, skipping`. The patch adds those fields. To undo it,
-reinstall the connector into the venv. Send `work/NXP-eiq-aaf-connector-issues.md` upstream: if NXP
-fixes this, the patch disappears.
+reinstall the connector into the venv. The defects have been reported to NXP; if they fix them, this
+patch disappears.
 
 ## server_config.json — the settings that actually matter
 

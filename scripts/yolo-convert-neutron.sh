@@ -14,7 +14,7 @@ python3 -c "import ultralytics; print('ultralytics', ultralytics.__version__)"
 #    - format=tflite is redirected to litert-torch (ultralytics 8.4.83+), whose graph neutron rejects;
 #      so it exports via the onnx2tf format=saved_model path instead.
 #    - it patches the Detect head to emit RAW pre-decode tensors, because YOLOv8's box decode
-#      (DFL + anchors) collapses to zero under int8; dolphin/yolo.py does that decode in float on CPU.
+#      (DFL + anchors) collapses to zero under int8; src/applib/yolo.py does that decode in float on CPU.
 #    Produces yolo11n_saved_model/yolo11n_full_integer_quant.tflite (output shape 1x144x2100).
 python3 scripts/yolo-export-prep.py
 

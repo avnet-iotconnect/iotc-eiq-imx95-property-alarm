@@ -29,9 +29,9 @@ that is where a mangled name becomes the wrong user.
    that mattered. Measured against the board: streamed, that sentence comes back as an empty
    message with `finish_reason: stop` and no tool call at all, while the **same** request
    non-streamed returns a correct `register_user('Joe')`. Single-tool questions do stream
-   correctly, which is why this survived lion. Nothing here needs tokens as they are produced -
+   correctly, which is how this hid for so long. Nothing here needs tokens as they are produced -
    the answer is spoken and sent to the cloud when it is finished - so not streaming costs the
-   demo nothing. See `work/NXP-eiq-aaf-connector-issues.md`.
+   demo nothing. See `connector/README.md`.
 2. *The prompt has to say so*: a model this size will otherwise do the first thing, answer, and
    consider the sentence dealt with. `SYSTEM_PROMPT` asks for one tool at a time, each after the
    last one's result, and for an answer only when nothing is left to do - the sequential phrasing

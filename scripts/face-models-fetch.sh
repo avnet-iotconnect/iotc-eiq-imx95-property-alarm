@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# face-models-fetch.sh - download YuNet + SFace ONNX (the elephant pilot's face models) to work/models.
+# face-models-fetch.sh - download YuNet + SFace ONNX (the demo's face models) to work/models.
 # Host-side only. These are the exact OpenCV Zoo releases cv2's FaceDetectorYN / FaceRecognizerSF expect.
 # Run: bash scripts/face-models-fetch.sh
 set -euo pipefail
@@ -26,4 +26,4 @@ for name in "${!models[@]}"; do
   fi
   echo "  -> $dest/$name (${size} bytes)"
 done
-echo "Done. Now: bash elephant/deploy.sh"
+echo "Done. Now: bash scripts/package-models.sh"

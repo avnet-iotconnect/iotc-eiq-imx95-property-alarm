@@ -19,12 +19,12 @@
 # Dropped wholesale: llm/ (848 MB), rag/ (95 MB), gui/, tests/, assets/.
 # Pruned after copying: whisper-small weights (288 MB), the fp32 TTS trio (152 MB), moonshine-tiny.
 #
-# The result unpacks onto the gitignored library directory inside the pilot, on the development PC
+# The result unpacks onto the gitignored library directory inside the demo, on the development PC
 # and the board alike:
-#   tar xzf dm-eiq-genai-flow-lib.tgz -C falcon/nxp-lib/
+#   tar xzf dm-eiq-genai-flow-lib.tgz -C src/nxp-lib/
 #
 # NXP's licence forbids editing these files, so everything is copied verbatim and LICENSE.txt rides
-# along as clause 3.4 requires. Our own code lives in falcon/, never in the payload.
+# along as clause 3.4 requires. Our own code lives in src/, never in the payload.
 
 set -euo pipefail
 
@@ -144,4 +144,4 @@ tar czf "$output" src testdata earcons VERSION.txt MANIFEST.txt
 echo
 echo "Wrote $output ($(du -h "$output" | cut -f1))"
 echo "  payload: $(du -sh src | cut -f1) across $(find src -type f | wc -l) files"
-echo "  unpack with: tar xzf $(basename "$output") -C falcon/nxp-lib/"
+echo "  unpack with: tar xzf $(basename "$output") -C src/nxp-lib/"

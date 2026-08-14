@@ -31,14 +31,16 @@ A USB camera attached to the FRDM-IMX95 board is used to detect and recognize pe
 ### AI/ML Features
 
 - YOLO11n running on Neutron NPU detects and tracks people and objects in the camera feed.
-- YuNet and SFace detect and recognize faces in the camera feed.
+- YuNet (on CPU) and SFace (on Neutron) detect and recognize faces in the camera feed.
 - Voice processing is triggered by NXP  
 [VIT wake word](https://www.nxp.com/design/design-center/software/embedded-software/voice-intelligent-technology-wake-word-and-voice-command-engines) 
 technology - `Hey NXP`. 
 - The board will process Speech-To-Text commands (moonshine-base on Neutron).
 - The board will provide Text-To-Speech feedback to the user (VITS).
 - A locally running VLM (SmolVLM 256M) can be used to describe the scene and answer questions about the scene.
-- Ara240 can be used to power a local agent using Qwen 2.5 7B model for natural language interaction.
+- Ara240 can be used to power a local agent using the *Qwen 2.5 7B Instruct* model for natural language interaction:
+  - Tell the agent what you need done, even multiple commands in one sentence like: "send me the alert log and arm the alarm"
+  - Also, in mostly any language: "löschen sie das ereignisprotokoll" 
 
 The NXP models are licensed for use on NXP hardware only and will run for one hour.
 
@@ -53,7 +55,7 @@ The NXP models are licensed for use on NXP hardware only and will run for one ho
 ### Enhanced Features
 
 - TTS [phoneme mapping](src/config/vocabulary.json) for pronouncing names and words correctly.
-- STT mapping of similarly sounding words [to known commands](src/applib/commands.py). Like TTS often interprets "unregister" as "I'm register".
+- STT mapping of similarly sounding words [to known commands](src/applib/commands.py). Like STT often interprets "unregister" as "I'm register".
 - Face detection threshold - The camera waits until it has a "clear shot" of the face to register the user.
 - YOLO track jitter smoothing - The camera will [smooth the bounding](src/applib/tracking.py) box of a tracked object to reduce jitter.
 
@@ -79,12 +81,44 @@ even if their face is no longer visible.
   - Triggered by requesting a snapshot C2D/Voice/Agent command, taken during alerts
   - Automatically taken when a new user is registered.
   - While the system is in alert state, snapshots are taken every several seconds and uploaded to the cloud.
-- One can upload user face images to the S3 bucket as device_uploads/*client_id*/faces/*Person Name*.jpg.
+- One can upload user face images to the S3 bucket as device-uploads/*client_id*/faces/*Person Name*.jpg.
   - The device will periodically check the S3 bucket for new images and automatically register them to the local database.
   - Each of files in this directory will be applied only once. 
-The downloade file S3 ETag is kept to avoid duplicate registration of the same image, for example if a user wishes to unregister or re-register using the camera.
+The downloaded file's S3 ETag is kept to avoid duplicate registration of the same image, for example if a user wishes to unregister or re-register using the camera.
 - OSD shows alarm state, Camera FPS(Inference FPS) Inference ms, *REC*ording (alert) status, last alert, reports model loading status, success/status for actions etc.
 - The demo restarts automatically to maintain the 60-minute eIQ license as well as AWS temporary credentials.
+
+# Commands
+
+The same commands are reachable three ways, and they all run the same code — the same handlers, the
+same refusals. Whatever answers you get is spoken back, flashed on the screen, and sent to the cloud.
+
+- **Voice** — say `Hey NXP`, wait for the blip, then you have about 3 seconds to start talking.
+The wording below is what the parser anchors on; the sentence around it does not matter
+("*please lock my laptop now*" works).
+- **Cloud** — the *Commands* tab of the device in /IOTCONNECT. These names come from the
+[device template](files/device-template.json), and arguments are typed into the command's parameter field.
+- **Agent** — the `agent` cloud command takes a plain-English sentence and hands it to the LLM on the
+Ara240, which then calls the commands below as its tools. Needs the Ara240 and [src/connector/](src/connector) running.
+
+| What it does                        | Say it                    | Cloud command               | Ask the agent                           |
+|-------------------------------------|---------------------------|-----------------------------|-----------------------------------------|
+| Register the face on screen         | `register user Michael`   | `user-register` *Michael*   | *register another user Michael*         |
+| Forget a registered user            | `unregister user Michael` | `user-unregister` *Michael* | *forget Michael*                        |
+| Undo the last registration          | `unregister last user`    | —                           | —                                       |
+| Arm the alarm                       | `arm the alarm`           | `alarm-arm`                 | *arm the alarm*                         |
+| Disarm, and clear everything        | `disarm the alarm`        | `alarm-disarm`              | *please disarm*                         |
+| Guard an object on screen           | `lock the laptop`         | `object-lock` *laptop*      | *guard the laptop*                      |
+| Stop guarding it                    | `unlock the laptop`       | `object-unlock` *laptop*    | *stop guarding the laptop*              |
+| Read out the event log              | `what happened`           | `alert-describe`            | *what have you caught?*                 |
+| Clear the event log                 | `clear the alert`         | `alert-clear`               | *clear the alert*                       |
+| Describe the scene (VLM)            | `describe the scene`      | `scene`                     | —                                       |
+| Snapshot to the cloud               | `take a snapshot`         | `snapshot`                  | *take a screenshot*                     |
+| Report the state and who is visible | —                         | —                           | *is the alarm on, and who can you see?* |
+| Report the local date and time      | —                         | —                           | *what time is it?*                      |
+| Ask a question in plain English     | —                         | `agent` *your sentence*     | —                                       |
+| Restart the demo                    | —                         | `restart`                   | —                                       |
+
 
 # Board Setup
 
@@ -164,7 +198,7 @@ web page.
 
 Version 3.1.3 does not match what is on the `L6.18.2-1.0.0_MX95` image and will need to be deployed on the board before running the installer.
 
-For local development, you can clone this repo first and unzip the SDK contents into work-refs/ (see [scripts/package-models.sh](scripts/package-models.sh).
+For local development, you can clone this repo first and unzip the SDK contents into work-refs/ (see [scripts/package-models.sh](scripts/package-models.sh)).
 
 # /IOTCONNECT Setup
 
@@ -297,4 +331,10 @@ You could use a USB microphone instead.
 Avnet code: [LICENSE.md](LICENSE.md)
 NXP code: [LICENSE_NXP.txt](LICENSE_NXP.txt)
 other licenses: [licenses/](licenses/)
+
+The two cover different halves of what ends up on the board. Everything in this repo is Avnet's and
+is MIT. NXP's eIQ GenAI Flow payload — the wake word, STT, TTS and VLM models and their runtime — is
+downloaded by `install.sh` and never redistributed here; it is covered by LICENSE_NXP.txt, and
+[licenses/LICENSE-SUMMARY.md](licenses/LICENSE-SUMMARY.md) is NXP's own component breakdown of it,
+copied unedited.
 

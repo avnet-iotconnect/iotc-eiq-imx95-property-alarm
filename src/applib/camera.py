@@ -28,7 +28,8 @@ costs 1.85 ms per frame on the capture thread - but flipping the *source* flips 
 inside the scene with it, so a badge, a screen or a label in shot reads backwards on the display, in
 the stream, and in every JPEG the cloud is sent. Mirroring further down instead is worse: after
 `cairooverlay` the OSD's own text is reversed too, and before it Cairo would be drawing boxes at
-unmirrored coordinates over a mirrored picture. See `work/STATUS-mamba.md`.
+unmirrored coordinates over a mirrored picture - which would leave the demo with two coordinate
+systems, what YOLO saw and what is on the screen, for every future thing that draws.
 """
 
 from __future__ import annotations

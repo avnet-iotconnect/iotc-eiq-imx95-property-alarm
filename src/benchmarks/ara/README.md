@@ -4,7 +4,7 @@
 those two numbers behave completely differently: time-to-first-token is roughly fixed, while decode
 scales with how much the model says. It is the number that decides whether an idea is demo-able.
 
-    .venv/bin/python koala/benchmarks/ara/bench-ara.py
+    .venv/bin/python benchmarks/ara/bench-ara.py
 
 ## Measured, Qwen2.5-7B-Instruct on rt-sdk-ara2 2.0.4
 
@@ -30,6 +30,6 @@ model, an OpenAI endpoint, and a dependency wall between the Ara's torch and the
 Two turns, not one: the model calls a tool, reads the result, then writes prose. The spread is the
 length of the *answer*, nothing else — the third one wrote a long sentence about the date.
 
-Context is **4096 tokens total**, prompt plus generation, compiled into the model. Nine tool
-schemas cost roughly 600 of them, which is why `app/agent.py` builds a fresh agent per question
+Context is **4096 tokens total**, prompt plus generation, compiled into the model. Eleven tool
+schemas cost roughly 700 of them, which is why `app/agent.py` builds a fresh agent per question
 rather than keeping the conversation.

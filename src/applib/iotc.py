@@ -1,6 +1,6 @@
 """/IOTCONNECT: telemetry out, commands in, snapshots to S3. (the "iotconnect" lineage)
 
-Everything cloud-shaped lives in this one file, on **one thread**, and the rest of the pilot does not
+Everything cloud-shaped lives in this one file, on **one thread**, and the rest of the demo does not
 import it. That is the whole design, and it comes from two facts:
 
 - The video loop must never wait on a network call. So producers write into
@@ -16,7 +16,7 @@ What flows each way:
           version, fps, alarm, objects, `scene` when someone asked the VLM a question, and
           `answer` when someone asked the LLM one - or when the event log was read out or cleared,
           because clearing destroys it and it only ever existed in RAM
-    C2D   the twelve commands in the alrmtheft device template, mapped to our verbs by `C2D_VERBS`;
+    C2D   the twelve commands in the device template, mapped to our verbs by `C2D_VERBS`;
           every one is acknowledged with the same sentence the demo would have spoken
     S3    `upload_capture()` puts capture.jpg in the bucket; /IOTCONNECT timestamps each version.
           The snapshot *handler* calls it, through a callable `main.py` handed the app - so saving
@@ -69,11 +69,11 @@ try:
     from avnet.iotconnect.sdk.lite import __version__ as SDK_VERSION
     from avnet.iotconnect.sdk.sdklib.mqtt import C2dAck
     IS_SDK_AVAILABLE = True
-except ImportError:  # the video half of the pilot must run on a board with no SDK installed
+except ImportError:  # the video half of the demo must run on a board with no SDK installed
     SDK_VERSION = "not installed"
     IS_SDK_AVAILABLE = False
 
-# The device template (files/alrmtheft.json) names the commands; this is the only place those names
+# The device template (files/device-template.json) names the commands; this is the only place those names
 # appear. Everything to the right is a verb `app.py` already implements - the cloud got a command
 # path that was built for voice, and needed no new handlers except `restart`.
 C2D_VERBS = {

@@ -1,5 +1,11 @@
 # License Summary for eIQ GenAI Flow v2.0
 
+> **Note for this repository.** This file is NXP's own summary, copied unedited from the eIQ GenAI
+> Flow Demonstrator package, and it describes **that package only** — not this demo. Two paths in it
+> do not resolve here: `../LICENSE.txt` is [`../LICENSE_NXP.txt`](../LICENSE_NXP.txt) in this repo,
+> and the `NXP-Software-License.txt` named below is that same file. This repository's own code is
+> Avnet's and is MIT — see [`../LICENSE.md`](../LICENSE.md).
+
 This document provides a summary of all licenses used in the eIQ GenAI Flow project.
 
 ## Main Project License

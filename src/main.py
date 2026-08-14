@@ -70,7 +70,7 @@ from pathlib import Path
 from threading import Event, Timer
 from time import perf_counter, sleep
 
-# NXP's library lives inside the pilot, but under its own directory: everything in nxp-lib/ is
+# NXP's library lives inside the demo, but under its own directory: everything in nxp-lib/ is
 # theirs and never edited, everything beside it is ours. One sys.path root replaces the nine that
 # their `pip install -e .` would have set up. Done before importing voice.py or scene.py.
 PAYLOAD = Path(__file__).resolve().parent / "nxp-lib"

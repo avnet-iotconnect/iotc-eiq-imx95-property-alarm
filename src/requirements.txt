@@ -3,7 +3,7 @@
 #
 #     python3 -m venv --system-site-packages venv              (install.sh does this)
 #
-# The vision half of the pilot needs NOTHING from pip -- `./run.sh --no-voice` works on a bare board.
+# The vision half of the demo needs NOTHING from pip -- `./run.sh --no-voice` works on a bare board.
 # Everything below is for the voice and VLM half, and is deliberately much shorter than NXP's
 # pyproject.toml, which pulls the RAG and LLM stacks we do not ship.
 
@@ -56,7 +56,7 @@ openai==2.52.0
 # Deliberately NOT installed:
 #   onnxruntime     the BSP build exposes NeutronExecutionProvider; pip's would break Neutron
 #   tflite_runtime  BSP's is ABI-matched to the Neutron delegate; pip's is not
-#   cv2             the BSP's bundles YuNet + SFace, which ARE this pilot's face models
+#   cv2             the BSP's bundles YuNet + SFace, which ARE this demo's face models
 #   numpy           BSP has 2.2.3, satisfying eIQ's >=2.2.3,<3.0.0
 #   ai-edge-litert  BSP has 1.2.0, satisfying eIQ's >=1.2.0
 #   pyalsaaudio     we drive the GStreamer backend; this is only the ALSA fallback, and it is a
