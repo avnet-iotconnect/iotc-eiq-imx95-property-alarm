@@ -34,6 +34,10 @@ systems, what YOLO saw and what is on the screen, for every future thing that dr
 
 from __future__ import annotations
 
+import os
+import socket
+from pathlib import Path
+
 import gi
 import numpy as np
 
@@ -120,6 +124,32 @@ class Camera:
 
     def stop(self) -> None:
         self.pipeline.set_state(Gst.State.NULL)
+
+
+def find_wayland_socket() -> Path | None:
+    """The compositor's socket, if one is really listening on it - otherwise None.
+
+    Asked before the pipeline is built, because **`waylandsink` cannot fail politely**: with no
+    compositor it refuses to leave PAUSED and takes the whole pipeline with it, so the appsink at
+    the far end simply never receives a buffer and the demo reports `camera returned no frame`.
+    That is a lie in the only direction that matters at a booth - the camera is fine, nobody has
+    plugged in the monitor. Weston exits when there is no HDMI at boot (and systemd stops retrying
+    after five goes), which is the state this detects.
+
+    Connecting rather than just looking for the file: weston leaves its socket behind when it dies,
+    so `exists()` alone would still send the demo into the failure it is meant to avoid.
+    """
+    display = os.environ.get("WAYLAND_DISPLAY", "wayland-0")
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    socket_path = Path(display) if display.startswith("/") else Path(runtime_dir) / display
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.connect(str(socket_path))
+    except OSError:
+        return None
+    finally:
+        probe.close()
+    return socket_path
 
 
 def build_pipeline_description(device: str, width: int, height: int, show_preview: bool,

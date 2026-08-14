@@ -81,7 +81,7 @@ from app.agent import AgentService  # noqa: E402
 from app.app import AntiTheftApp  # noqa: E402
 from app.watchdog import Watchdog  # noqa: E402
 from applib import audio_devices, camera_devices, commands, iotc, neutron, vocabulary, webrtc  # noqa: E402
-from applib.camera import Camera  # noqa: E402
+from applib.camera import Camera, find_wayland_socket  # noqa: E402
 from applib.commands import Command, CommandResult, CommandService  # noqa: E402
 from applib.detector import Detector  # noqa: E402
 from applib.eventlog import EventLog  # noqa: E402
@@ -390,7 +390,7 @@ def main() -> None:
     # It also comes before the streamer, which needs `request_keyframe` to hand to each viewer.
     is_streaming = not args.no_webrtc and webrtc.IS_WEBRTC_AVAILABLE
     camera = Camera(resolve_camera_device(args), args.width, args.height,
-                    show_preview=not args.no_preview, is_streaming=is_streaming)
+                    show_preview=resolve_preview(args), is_streaming=is_streaming)
     streamer = build_streamer(args, overlay, camera) if is_streaming else None
     if streamer is None:
         overlay.set_stream_status("stream: off")
@@ -596,6 +596,28 @@ def resolve_camera_device(args) -> str:
     node, device = found
     print(f"Camera     : {node}  {device}")
     return node
+
+
+def resolve_preview(args) -> bool:
+    """Show the picture on HDMI - unless there is nothing to show it on, which is not fatal.
+
+    A monitor is the one part of this demo that is routinely absent: the board gets carried to a
+    booth, a desk or another room, and Weston exits at boot when no HDMI is connected. The preview
+    is then the only branch of the pipeline that cannot be built, and it does not fail on its own -
+    it stops the *whole* pipeline, so the demo dies reporting `camera returned no frame`. Dropping
+    it costs the local screen and nothing else: the OSD is composed upstream, so WebRTC viewers and
+    every snapshot still get exactly the picture the monitor would have shown.
+
+    Plugging HDMI in later needs `systemctl restart weston` before the demo starts, because systemd
+    gives up after five failed attempts.
+    """
+    if args.no_preview:
+        return False
+    if find_wayland_socket() is not None:
+        return True
+    print("Display    : no Wayland compositor - preview off (HDMI unplugged?). "
+          "Streaming and snapshots are unaffected.")
+    return False
 
 
 def resolve_audio_config(args) -> audio_devices.AudioConfig:
