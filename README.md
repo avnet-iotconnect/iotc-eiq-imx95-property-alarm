@@ -291,7 +291,7 @@ IMX95=root@192.168.38.203 # your board's IP
 ssh $IMX95
 cd ~/pa
 # download the source package:
-wget -O iotc-property-alarm-src.tgz https://downloads.iotconnect.io/partners/nxp/packages/iotc-property-alarm-src-v2.0.0.tgz
+wget -O iotc-property-alarm-src.tgz https://downloads.iotconnect.io/partners/nxp/packages/iotc-property-alarm-src-v2.0.1.tgz
 tar zxf iotc-property-alarm-src.tgz
 ./install.sh      # run once
 ./run.sh          # run the demo
