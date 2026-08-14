@@ -60,8 +60,8 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from threading import Lock
-from time import perf_counter
+from threading import Lock, Thread
+from time import perf_counter, sleep
 from typing import Callable
 
 from applib import commands
@@ -81,6 +81,15 @@ ARA_MODEL = "Qwen2.5-7B-Instruct"      # the 1.5B also loads, but loops forever 
 MAX_TOKENS = 256                       # ~50 s of generation at 5 tok/s; long enough for any answer here
 TEMPERATURE = 0.7                      # NOT 0.0 - see the module docstring
 IS_STREAMING = False                   # the connector loses tool calls when it streams - see above
+
+# The HUD says "ready" only once the model has actually answered something. Building this object
+# proves nothing - the connector is a separate process that takes ~4 minutes to load its model and
+# may not be running at all - so one throwaway question is asked in the background, and asked again
+# every PROBE_INTERVAL_S until it lands. A question that arrives before then is refused in a
+# sentence instead of waiting ~40 s to fail, which is what a C2D command used to do.
+PROBE_QUESTION = "Say ready."
+PROBE_SYSTEM_PROMPT = "Answer with a single word."
+PROBE_INTERVAL_S = 30.0
 
 SYSTEM_PROMPT = (
     "You are the assistant built into an anti-theft camera demo on an NXP i.MX95 board. "
@@ -113,10 +122,49 @@ class AgentService:
         )
         self._tools = self._build_tools()
         self._lock = Lock()
-        self.on_status("agent: ready")
+        self.is_ready = False
+        self.on_status("agent: starting")
+        Thread(target=self._watch_the_connector, name="agent-probe", daemon=True).start()
+
+    def _watch_the_connector(self) -> None:
+        """Ask the model one throwaway question in the background until it answers - and again if a
+        real question later fails, so the line recovers by itself when the connector comes back.
+
+        A thread because the connector may still be loading its model, and a demo that waited for
+        that - or refused to start without it - would be a worse demo. Nothing here can fail loudly:
+        the only thing at stake is one word on the HUD.
+        """
+        is_first_failure = True
+        while True:
+            if self.is_ready:
+                sleep(PROBE_INTERVAL_S)
+                continue
+            try:
+                with self._lock:
+                    Agent(model=self._model, system_prompt=PROBE_SYSTEM_PROMPT,
+                          callback_handler=None)(PROBE_QUESTION)
+            except Exception as error:
+                if is_first_failure:  # once, not every thirty seconds for the rest of the day
+                    print(f"[agent] the Ara is not answering yet ({type(error).__name__}) - "
+                          f"retrying every {PROBE_INTERVAL_S:.0f}s")
+                    is_first_failure = False
+                self._set_ready(False)
+                sleep(PROBE_INTERVAL_S)
+                continue
+            self._set_ready(True)
+            print("[agent] the Ara answered - ready for questions")
+
+    def _set_ready(self, is_ready: bool) -> None:
+        self.is_ready = is_ready
+        self.on_status("agent: ready" if is_ready else "agent: offline")
 
     def ask(self, question: str) -> str:
         """Answer one question, running whatever tools the model decides it needs. Blocks for ~30 s."""
+        if not self.is_ready:
+            # Every source funnels through here - voice, C2D, `--text-commands` - so this is the one
+            # place the wait has to be cut short. Without it a dashboard command sits for ~40 s and
+            # comes back with a connection error.
+            raise CommandError("The assistant is still starting up on the Ara-240. Try again shortly.")
         with self._lock:
             self.on_status("agent: thinking")
             started = perf_counter()
@@ -136,11 +184,13 @@ class AgentService:
                 # `--iotc-verbose`-style detail is a `logging.DEBUG` away when it is really wanted.
                 logger.debug("the agent failed", exc_info=True)
                 print(f"[agent] {type(error).__name__}: {error}")
+                # A question that failed is evidence about the connector, the same as the probe's:
+                # the line goes back to "offline" rather than claiming to be ready.
+                self._set_ready(False)
                 raise CommandError(
                     f"I could not reach the language model on the Ara ({type(error).__name__}). "
                     f"Check that the connector is running: cd connector && ./run.sh") from error
-            finally:
-                self.on_status("agent: ready")
+            self.on_status("agent: ready")
             print(f"[agent] {perf_counter() - started:.1f}s | {question!r} -> {answer!r}")
         return answer or "I do not have an answer for that."
 

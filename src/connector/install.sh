@@ -56,6 +56,9 @@ venv/bin/pip install --disable-pip-version-check ./source
 echo "==> patching for OpenAI tool-call conformance"
 ./apply-patch.sh
 
+echo "==> fetching Qwen2.5-7B-Instruct"
+fetch_models --repo-id nxp/Qwen2.5-7B-Instruct-Ara240
+
 echo
 echo "installed and patched in $(pwd)"
 echo "next:  ./run.sh"

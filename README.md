@@ -15,12 +15,14 @@ version 3.0.
 - [NXP FRDM-IMX95](https://www.avnet.com/americas/product/nxp/frdm-imx95/evolve-122131125/)
 - (optional) [NXP Ara240](https://www.avnet.com/americas/product/gateworks/gw16168/evolve-216891109?searchTerm=Ara240)
 - A USB Camera, [Logitech C920x HD Pro PC Webcam](https://www.amazon.com/Logitech-C920x-Pro-HD-Webcam/dp/B085TFF7M1) recommended.
+- A 16GB SD Card is recommended (as opposed to the built-in eMMC) to run the basic demo without Ara240.
+- A 32GB SD Card is required to run the agent on Ara240.
 
 ### Other Optional Devices
 
 - An HDMI monitor can be connected to view the camera feed.
 - 3.5mm headphone jack can be connected to a phone microphone + headphones.
-- For best STT performance, we recommend a USB directional microphone like Fifine AM8. PC speakers can then be connected to the 3.5mm headphone jack.
+- For best STT performance, we recommend a USB directional microphone like FIFINE AM8. PC speakers can then be connected to the 3.5mm headphone jack.
 - The board has a bluetooth receiver. It can be used to connect a bluetooth headphones and/or speaker for TTS feedback.
 
 # Features
