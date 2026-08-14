@@ -306,27 +306,19 @@ cd ~/pa/connector
 
 # Tips, FAQ Troubleshooting and Known Issues
 
-- When you have no sound device plugged in, "Hey NXP" trigger and command responses may appear to be delayed.
-Use the `--no-tts` flag to bypass TTS processing and improve visual feedback time.
-
-- The demo will default to the USB audio. If you don't want audio to be detected, run the demo with the 3.5mm jack sound device `./run.sh --mic micfil` with no microphone plugged in.
-
-- If a demo abruptly power cycles the board, the most likely issue is power delivery.
+- If a demo abruptly power cycles the board, especially with Ara240 plugged in, the most likely issue is power delivery.
 Plug the board into a high power USB port, using the cable supplied with the board or 
-to be 100% sure, plug in a phone USB charger cable into the power USB-C port. 
-
-- The USB camera may appear as /dev/video4 or /dev/video52 etc. when plugged in.
-The best solution is power the board (power button or re-plug USB power)
-**while the USB camera is plugged in**. If a board is running, issue a `poweroff` to cleanly shutdown. 
-
+to be 100% sure, plug in a phone USB charger cable into the power USB-C port.
 - FPS is lower at times:
-The FPS fluctuation on the screen is normal as we periodically read faces on the screen (every Nth frame). 
-Additionally, for the first minute or so, loading the models will consume more system resources and slow FPS down.
 Depending on the camera, in low lighting conditions camera exposure may affect FPS.
 Camera may keep the shutter open for longer in order to absorb more light.
-
+Additionally, for the first minute or so, loading the models will consume more system resources and slow FPS down.
+- When you have no sound device plugged in, "Hey NXP" trigger and command responses may appear to be delayed.
+Use the `--no-tts` flag to bypass TTS processing and improve visual feedback time.
+- The demo will default to the USB audio. If you don't want audio to be detected, 
+run the demo with the 3.5mm jack sound device `./run.sh --mic micfil` with no microphone plugged in.
 - 3.5mm jack audio may not recognize the first syllable correctly. The audio driver seems to have a problem with a "pop" sound as it starts the sound recording.
-You could use a USB microphone instead.
+You could use a USB or camera microphone instead.
 
 
 # License
@@ -340,4 +332,3 @@ is MIT. NXP's eIQ GenAI Flow payload — the wake word, STT, TTS and VLM models 
 downloaded by `install.sh` and never redistributed here; it is covered by LICENSE_NXP.txt, and
 [licenses/LICENSE-SUMMARY.md](licenses/LICENSE-SUMMARY.md) is NXP's own component breakdown of it,
 copied unedited.
-
