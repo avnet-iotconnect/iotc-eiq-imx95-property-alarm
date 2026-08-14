@@ -102,7 +102,7 @@ from applib.webrtc import WebRtcStreamer  # noqa: E402
 MODELS = Path(__file__).resolve().parent / "models"  # converted on the host, copied over with us
 VLM_WEIGHTS = MODELS / "vlm"                          # SmolVLM, pulled from Hugging Face by --prefetch
 FACES = Path(__file__).resolve().parent / "faces"     # photographs downloaded from the device's S3 folder
-VERSION = "2.0.1"       # reported as the 'version' telemetry attribute
+VERSION = "2.1.0"       # reported as the 'version' telemetry attribute
 FPS_REPORT_FRAMES = 15  # how often the frame loop refreshes the fps it tells the cloud
 RESTART_DELAY_S = 3.0   # a restart waits this long, so its C2D ack reaches the cloud first
 # How many frames the fps and the frame time on the HUD are averaged over. Two seconds' worth: a

@@ -1,6 +1,6 @@
 # About
 
-This demo is Smart Camera with property alarm capabilities running on NXP FRDM-IMX95 with optional Ara240 hardware.
+This demo is Smart Camera with Property Alarm capabilities running on NXP FRDM-IMX95 with optional Ara240 hardware.
 
 FRDM-IMX95 features 6 Arm CPU cores and a Neutron NPU which accelerate the AI/ML workloads.
 Optional Ara240 can power the large generative models.
@@ -8,6 +8,8 @@ Optional Ara240 can power the large generative models.
 The demo is based in part on the NXP's 
 [NXP® eIQ® GenAI Flow Demonstrator Package](https://github.com/nxp-appcodehub/dm-eiq-genai-flow-demonstrator/tree/release/v3.0) 
 version 3.0.
+
+![Thief](files/thief.jpg "Theft Alert")
 
 
 # Hardware
@@ -291,7 +293,7 @@ IMX95=root@192.168.38.203 # your board's IP
 ssh $IMX95
 cd ~/pa
 # download the source package:
-wget -O iotc-property-alarm-src.tgz https://downloads.iotconnect.io/partners/nxp/packages/iotc-property-alarm-src-v2.0.1.tgz
+wget -O iotc-property-alarm-src.tgz https://downloads.iotconnect.io/partners/nxp/packages/iotc-property-alarm-src-v2.1.0.tgz
 tar zxf iotc-property-alarm-src.tgz
 ./install.sh      # run once
 ./run.sh          # run the demo
