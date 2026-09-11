@@ -259,10 +259,11 @@ IMX95=root@192.168.38.203 # your board's IP
 ssh $IMX95 mkdir -p pa
 # Download this file from the /IOTCONNECT portal and copy it to the board.
 scp iotcDeviceConfig.json $IMX95:pa/
-# the app will look for these two fixed names for cert and private key
+# The cert and key file in the zip with be .cert and .pem respectivelly.
+# The app will look for these two fixed names for cert and private key so
 # either copy them from the /IOTCONNECT portal or create them on the board (see below)
-scp *-crt.pem $IMX95:pa/device-cert.pem
-scp *-key.pem $IMX95:pa/device-pkey.pem
+scp cert_*.crt $IMX95:pa/device-cert.pem
+scp pk_*.pem $IMX95:pa/device-pkey.pem
 scp eiq-neutron-sdk-linux-3.1.3.zip $IMX95:pa/  # the installer below will use this zip to install the matching neutron SDK on the board
 ```
 SSH to the device (ssh $IMX95):
